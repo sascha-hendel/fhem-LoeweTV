@@ -86,7 +86,7 @@ sub LoeweTV_Initialize($) {
                         #"RCkey " .
                         #"clientid " .
                         #"fcid " .
-                        #"status:accepted,Pending,Denied,undef " .
+                        "status:Accepted,Pending,Denied,undef " .
                         #"connectsuccess:true,false " .
                         #"pingresult:down,up " .
                         #"lastersponse " .
@@ -331,11 +331,11 @@ sub LoeweTV_CheckAccess($) {
     my $n           = 1;
     
     
-    while ((ReadingsVal($name,'state','denied') ne "accepted") and ($n<=3)) {
+    #while ((ReadingsVal($name,'state','denied') ne "accepted") and ($n<=3)) {
     
-        $n=$n+1;
+    #    $n=$n+1;
         LoeweTV_SendRequest($hash,"RequestAccess",0)
-    };
+    #};
     
     
     
