@@ -39,6 +39,8 @@ package main;
 use strict;
 use warnings;
 
+use Data::Dumper::Simple;    # Kann später entfernt werden, nur zum Debuggen
+
 
 my $missingModul = "";
 eval "use LWP::UserAgent;1" or $missingModul .= "LWP::UserAgent ";
@@ -48,7 +50,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.23";
+my $version = "0.0.26";
 
 
 # Declare functions
@@ -126,6 +128,7 @@ sub LoeweTV_Define($$) {
     $hash->{TVMAC}      = $a[3] if(defined($a[3]));
     $hash->{VERSION}    = $version;
     $hash->{INTERVAL}   = 15;
+    $hash->{CLIENTID}   = "?";
     
     
     Log3 $name, 3, "LoeweTV $name: defined LoeweTV device";
@@ -358,18 +361,18 @@ sub LoeweTV_SendRequest($$$) {
     my %actions = (
         "RequestAccess"         =>  [sub {$content='<ltv:DeviceType>Apple iPad</ltv:DeviceType>
                                         <ltv:DeviceName>FHEM</ltv:DeviceName>
-                                        <ltv:DeviceUUID>'.$hash->{mac}.'</ltv:DeviceUUID>
+                                        <ltv:DeviceUUID>'.$hash->{TVMAC}.'</ltv:DeviceUUID>
                                         <ltv:RequesterName>Assist Media App</ltv:RequesterName>'},
-                                        {'m:ClientId' => sub {$hash->{CLIENTID} = $_->text_only('m:ClientId');},
+                                        {'m:ClientId' => sub {$hash->{CLIENTID} = $_->text_only('m:ClientId')},
                                         'm:AccessStatus' => sub {readingsSingleUpdate($name,'state',"$_->text_only('m:AccessStatus'",1);},}
                                     ],
                                     
         "InjectRCKey"           =>  [sub {$content='<InputEventSequence>
                                         <RCKeyEvent alphabet="l2700" value="'.$RCkey.'" mode="press"/>
                                         <RCKeyEvent alphabet="l2700" value="'.$RCkey.'" mode="release"/>
-                                        </InputEventSequence>'}],
+                                        </InputEventSequence>'},{"ltv:InjectRCKey" => sub {$hash->{helper}{lastchunk} = $_->text_only();}},],
                                         
-        "GetDeviceData"         =>  [sub {$content='';$result="m:MAC-Address"}],
+        "GetDeviceData"         =>  [sub {$content='';},{"m:MAC-Address" => sub {$hash->{TVMAC} = $_->text("m:MAC-Address");}}],
             
         "GetChannelList"        =>  [sub {$content="<ltv:ChannelListView>".$RCkey."</ltv:ChannelListView>
                                         <ltv:QueryParameters>
@@ -391,7 +394,7 @@ sub LoeweTV_SendRequest($$$) {
         "GetChannelInfo"        =>  [sub {$content=""}],
             
         "GetCurrentPlayback"    =>  [sub {$content='';},
-                                        {"m:Locator" => sub {$hash->{lastchunk} = $_->text_only();},}
+                                        {"m:Locator" => sub {$hash->{helper}{lastchunk} = $_->text_only();},}
                                     ],
                                         
         "GetCurrentEvent"       =>  [sub {$content="<ltv:Player>0</ltv:Player>";},
@@ -455,12 +458,12 @@ sub LoeweTV_SendRequest($$$) {
     
     
     # Aufbau der HTTP Verbindung
-    $request = HTTP::Request->new(POST => 'http://'.$hash->{ip}.':905/loewe_tablet_0001');
+    $request = HTTP::Request->new(POST => 'http://'.$hash->{HOST}.':905/loewe_tablet_0001');
     
     # Aufbau des Agents
     $userAgent = LWP::UserAgent->new(agent => 'Assist Media/23 CFNetwork/808 Darwin/16.0.0');
     
-    Aufbau des Headers
+    # Aufbau des Headers
     $request->header('Accept' => '*/*');
     $request->header('Accept-Encoding' => 'gzip, deflate');
     $request->header('Accept-Language' => 'de-de');
