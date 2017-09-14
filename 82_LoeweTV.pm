@@ -62,7 +62,7 @@ sub LoeweTV_Set($@);
 sub LoeweTV_WakeUp_Udp($@);
 sub LoeweTV_CheckAccess($);
 sub LoeweTV_SendRequest($$$);
-sub LoeweTV_ResponseProcessing($$);
+sub LoeweTV_ResponseProcessing($$$);
 sub LoeweTV_WriteReadings($$);
 sub LoeweTV_Presence($);
 sub LoeweTV_PresenceRun($);
@@ -117,8 +117,6 @@ sub LoeweTV_Define($$) {
     return "too few parameters: define <NAME> LoeweTV <HOST> <MAC-TV>" if( @a < 3 or @a > 4 );
     return "Cannot define Loewe device. Perl modul ${missingModul}is missing." if ( $missingModul );
 
-    
-    
     
     my $name            = $hash->{NAME};
     my $host            = $a[2];
@@ -222,6 +220,7 @@ sub LoeweTV_FirstRun($) {
     
     if(ReadingsVal($name,'presence','absent') eq 'present') {
     
+        LoeweTV_CheckAccess($hash);
         LoeweTV_SendRequest($hash,'GetDeviceData',0);
         
     } else {
@@ -253,15 +252,16 @@ sub LoeweTV_Set($@) {
         LoeweTV_WakeUp_Udp($hash,$hash->{HOST},$hash->{TVMAC});
         return;
     
-    } elsif( lc $cmd eq '' ) {
+    } elsif( lc $cmd eq 'access' ) {
     
+      LoeweTV_CheckAccess($hash);
     
     } elsif( lc $cmd eq '' ) {
     
     
     } else {
     
-        my $list    = 'SetActionField SetVolume:slider,0,1,100 SetMute:on,off connect:noArg WakeUp:noArg';
+        my $list    = 'SetActionField SetVolume:slider,0,1,100 SetMute:on,off connect:noArg WakeUp:noArg access';
         
         return "Unknown argument $cmd, choose one of $list";
     }
@@ -282,7 +282,7 @@ sub LoeweTV_Set($@) {
     
     
     
-    LoeweTV_SendRequest($hash,$action,$RCkey) if(ReadingsVal($name,'presence','absent') eq 'present');
+#JV    LoeweTV_SendRequest($hash,$action,$RCkey) if(ReadingsVal($name,'presence','absent') eq 'present');
     
     
     Log3 $name, 5, "LoeweTV $name: called function LoeweTV_Set()";
@@ -337,18 +337,15 @@ sub LoeweTV_CheckAccess($) {
     #while ((ReadingsVal($name,'state','denied') ne "accepted") and ($n<=3)) {
     
     #    $n=$n+1;
-        LoeweTV_SendRequest($hash,"RequestAccess",0)
+        LoeweTV_SendRequest($hash,"RequestAccess",0);
     #};
     
     
     
-    print "run CHECKACCESS: ReadingsVal($name,'state','denied')   \n";
-    
+    print "run CHECKACCESS: ".ReadingsVal($name,'state','denied')."   \n";
     
     return(ReadingsVal($name,'state','denied'));
-    
-    
-    }
+}
 
 sub LoeweTV_SendRequest($$$) {
 
@@ -364,7 +361,7 @@ sub LoeweTV_SendRequest($$$) {
                                         <ltv:DeviceUUID>'.$hash->{TVMAC}.'</ltv:DeviceUUID>
                                         <ltv:RequesterName>Assist Media App</ltv:RequesterName>'},
                                         {'m:ClientId' => sub {$hash->{CLIENTID} = $_->text_only('m:ClientId')},
-                                        'm:AccessStatus' => sub {readingsSingleUpdate($name,'state',"$_->text_only('m:AccessStatus'",1);},}
+                                        'm:AccessStatus' => sub {readingsSingleUpdate($hash,'state',$_->text_only('m:AccessStatus'),1);},}
                                     ],
                                     
         "InjectRCKey"           =>  [sub {$content='<InputEventSequence>
@@ -372,7 +369,7 @@ sub LoeweTV_SendRequest($$$) {
                                         <RCKeyEvent alphabet="l2700" value="'.$RCkey.'" mode="release"/>
                                         </InputEventSequence>'},{"ltv:InjectRCKey" => sub {$hash->{helper}{lastchunk} = $_->text_only();}},],
                                         
-        "GetDeviceData"         =>  [sub {$content='';},{"m:MAC-Address" => sub {$hash->{TVMAC} = $_->text("m:MAC-Address");}}],
+        "GetDeviceData"         =>  [sub {$content='';},{"m:MAC-Address" => sub {$hash->{TVMAC} = $_->text("m:MAC-Address");},"m:Chassis" => sub {$hash->{Chassis} = $_->text("m:Chassis");},"m:SW-Version" => sub {$hash->{SW_Version} = $_->text("m:SW-Version");}}],
             
         "GetChannelList"        =>  [sub {$content="<ltv:ChannelListView>".$RCkey."</ltv:ChannelListView>
                                         <ltv:QueryParameters>
@@ -427,9 +424,9 @@ sub LoeweTV_SendRequest($$$) {
     
     #$action = "GetDeviceData" if( ! defined($action));
     
-    my $header = "<env:Envelope
-        xmlns:env='http://schemas.xmlsoap.org/soap/envelope/'
-        xmlns:ltv='urn:loewe.de:RemoteTV:Tablet'><env:Body>\n";
+    my $header = "<?xml version='1.0' encoding='UTF-8'?>\n<env:Envelope
+        xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\"
+        xmlns:ltv=\"urn:loewe.de:RemoteTV:Tablet\">\n<env:Body>\n";
     
     my $action_xml1 = "<ltv:$action>\n";
     
@@ -476,37 +473,40 @@ sub LoeweTV_SendRequest($$$) {
     
     # ???
     $request->content($message);
-    $response = $userAgent->request($request);
     
+    Log3 $name, 2, "Sub LoeweTV_SendRequest ($name) - Request: ".Dumper($message);
+    
+    $response = $userAgent->request($request);
     
     $noob = $response->content;
     
     $twig2 = XML::Twig->new(twig_handlers => $handlers,keep_encoding => 1)->parse($noob);
     
     
-    LoeweTV_ResponseProcessing($hash,$response);
+    LoeweTV_ResponseProcessing($hash,$response, $action);
 }
     
     
-sub LoeweTV_ResponseProcessing($$) {
+sub LoeweTV_ResponseProcessing($$$) {
     
-    my ($hash,$response)        = @_;
+    my ($hash,$response,$action)        = @_;
     
     my $name                    = $hash->{NAME};
     
-    Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: $response->error_as_HTML";
-    Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: $response->content";
     
-    if($response->code == 200) {
+    if ( ( ! $response->is_error() ) && ($response->code == 200) ) {
+        Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: ".Dumper($response->content);
         $hash->{connectsuccess} = "true";	
         $hash->{lastresponse} = $response->content;
     
     } else {
+        Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: ".Dumper($response->content);
+        Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: ".Dumper($response->error_as_HTML) if ( $response->is_error() );
         $hash->{connectsuccess} = "false";
         $hash->{lastresponse} = $response->error_as_HTML;
     }
     
-    if($hash->{action} eq "RequestAccess"){
+    if($action eq "RequestAccess"){
         return($hash->{status})
     }else{
         return($hash->{status})
