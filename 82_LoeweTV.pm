@@ -6,7 +6,8 @@
 #  All rights reserved
 #
 #   Special thanks goes to comitters:
-#       - der.einstein      Thanks for Commit
+#       - der.einstein      Initiator and Commiter
+#       - viegener          Thanks for many Commits
 #
 #
 #  This script is free software; you can redistribute it and/or modify
@@ -77,7 +78,6 @@ my $version = "0.0.26";
 sub LoeweTV_Define($$);
 sub LoeweTV_Undef($$);
 sub LoeweTV_Initialize($);
-sub LoeweTV_Get($@);
 sub LoeweTV_Set($@);
 sub LoeweTV_WakeUp_Udp($@);
 sub LoeweTV_SendRequest($$;$$);
@@ -87,6 +87,12 @@ sub LoeweTV_Presence($);
 sub LoeweTV_PresenceRun($);
 sub LoeweTV_PresenceDone($);
 sub LoeweTV_PresenceAborted($);
+sub LoeweTV_TimerStatusRequest($);
+sub LoeweTV_Attr(@);
+sub LoeweTV_FirstRun($);
+sub LoeweTV_IsPresent($);
+sub LoeweTV_HasAccess($);
+sub LoeweTV_ParseRequestAccess($$);
 
 #########################
 # Globals
