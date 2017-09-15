@@ -34,17 +34,22 @@
 ## - do setters
 ## - add queuing
 ## - work off queue from callback
+## 0.0.27
+## - RequestAccess status as reading --> access - accepted
+## - removed LoeweTV_ResponseProcessing
+## 0.0.28
+##
 ##
 ###############################################################################
 ###############################################################################
 ##  TODO
 ###############################################################################
 ## - 
-## - 
-## - 
+## - sendRequest: rename RCkey to a generic param 
+## - sendRequest: allow additional param (also as array)
+## - collect data from XML in hash for readings update
 ## - 
 ## - calc fcid from uniqueid?
-## - put connection to reading
 ## - update state consistently
 ## - start/stop presence and timerstatusrequest on disabled
 ## - activate timerstatusrequest
@@ -68,10 +73,10 @@ eval "use LWP::UserAgent;1" or $missingModul .= "LWP::UserAgent ";
 eval "use HTTP::Request::Common;1" or $missingModul .= "HTTP::Request::Common ";
 eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 
-#use Blocking;
+use Blocking;
 
 
-my $version = "0.0.27";
+my $version = "0.0.28";
 
 
 # Declare functions
@@ -81,7 +86,6 @@ sub LoeweTV_Initialize($);
 sub LoeweTV_Set($@);
 sub LoeweTV_WakeUp_Udp($@);
 sub LoeweTV_SendRequest($$;$$);
-sub LoeweTV_ResponseProcessing($$$);
 sub LoeweTV_WriteReadings($$);
 sub LoeweTV_Presence($);
 sub LoeweTV_PresenceRun($);
@@ -120,7 +124,7 @@ sub LoeweTV_Initialize($) {
                         #"clientid " .
                         #"fcid " .
                         "status:Accepted,Pending,Denied,undef " .
-                        #"hasaccess:true,false " .
+                        #"access:accepted,misc " .
                         #"pingresult:down,up " .
                         #"lastersponse " .
                         #"lastchunk " .
@@ -368,12 +372,12 @@ sub LoeweTV_ParseRequestAccess($$) {
  
     return if ( ! defined($access) );
     
-    if ( ( lc $access eq "accepted" ) || ( lc $access eq "full" ) ) {
+    if ( ( lc $access eq "accepted" ) ) {
       readingsSingleUpdate($hash,'state','connected',1);
-      $hash->{hasaccess} = "true";	
+      readingsSingleUpdate($hash,'access','accepted',1);
     } else {
       Log3 $name, 2, "LoeweTV_ParseRequestAccess $name: not connected";
-      $hash->{hasaccess} = "false";
+      readingsSingleUpdate($hash,'access',$access,1);
       readingsSingleUpdate($hash,'state','disconnected',1);
     }
  
@@ -663,33 +667,7 @@ sub LoeweTV_HU_Callback($$$)
 
 }
 
-
     
-sub LoeweTV_ResponseProcessing($$$) {
-    
-    my ($hash,$response,$action)        = @_;
-    
-    my $name                    = $hash->{NAME};
-    
-    
-    if ( ( ! $response->is_error() ) && ($response->code == 200) ) {
-        Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: ".Dumper($response->content);
-        $hash->{hasaccess} = "true";	
-        $hash->{lastresponse} = $response->content;
-    
-    } else {
-        Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: ".Dumper($response->content);
-        Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: ".Dumper($response->error_as_HTML) if ( $response->is_error() );
-        $hash->{hasaccess} = "false";
-        $hash->{lastresponse} = $response->error_as_HTML;
-    }
-    
-    if($action eq "RequestAccess"){
-        return($hash->{status})
-    }else{
-        return($hash->{status})
-    };
-}
 
 sub LoeweTV_WriteReadings($$) {
 
@@ -775,7 +753,7 @@ sub LoeweTV_IsPresent($) {
 
 sub LoeweTV_HasAccess($) {
     my $hash = shift;
-    return ( $hash->{hasaccess} eq 'true');
+    return (ReadingsVal($hash->{NAME},'access','undef') eq 'accepted');
 }
 
 
