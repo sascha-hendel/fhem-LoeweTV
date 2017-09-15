@@ -71,7 +71,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 #use Blocking;
 
 
-my $version = "0.0.26";
+my $version = "0.0.27";
 
 
 # Declare functions
