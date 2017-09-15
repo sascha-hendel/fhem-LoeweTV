@@ -260,12 +260,12 @@ sub LoeweTV_Set($@) {
     
     if( lc $cmd eq 'setactionfield' ) {
 
-    } elsif( lc $cmd eq 'setvolume' ) {
+    } elsif( lc $cmd eq 'volume' ) {
         return "$cmd needs volume" if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^\d+$/ ) );
         # value range is between 0 - 999999
         @actionargs = ( 'SetVolume', $args[0]*9999 );    
     
-    } elsif( lc $cmd eq 'setmute' ) {
+    } elsif( lc $cmd eq 'mute' ) {
         return "$cmd needs argument on or off " if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^(on|off)$/ ) );
         @actionargs = ( 'SetMute', ( $args[0] eq "on" )?1:0 );    
         
@@ -288,7 +288,7 @@ sub LoeweTV_Set($@) {
     
     } else {
     
-        my $list    = 'SetActionField SetVolume:slider,0,1,100 RemoteKey SetMute:on,off WakeUp:noArg access:noArg deviceData:noArg ';
+        my $list    = 'SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg access:noArg deviceData:noArg ';
         
         return "Unknown argument $cmd, choose one of $list";
     }
