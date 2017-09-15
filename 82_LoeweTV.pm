@@ -6,8 +6,8 @@
 #  All rights reserved
 #
 #   Special thanks goes to comitters:
-#       - der.einstein      Thanks for Commit
-#       - viegener          Thanks for Commit
+#       - der.einstein      Initiator and Commiter
+#       - viegener          Thanks for many Commits
 #
 #
 #  This script is free software; you can redistribute it and/or modify
@@ -30,7 +30,27 @@
 #
 ###############################################################################
 ##
+## - initial HTTPUtils modification
+## - do setters
+## - add queuing
+## - work off queue from callback
 ##
+###############################################################################
+###############################################################################
+##  TODO
+###############################################################################
+## - 
+## - 
+## - 
+## - 
+## - calc fcid from uniqueid?
+## - put connection to reading
+## - update state consistently
+## - start/stop presence and timerstatusrequest on disabled
+## - activate timerstatusrequest
+##
+## - 
+###############################################################################
 
 
 
@@ -48,7 +68,7 @@ eval "use LWP::UserAgent;1" or $missingModul .= "LWP::UserAgent ";
 eval "use HTTP::Request::Common;1" or $missingModul .= "HTTP::Request::Common ";
 eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 
-use Blocking;
+#use Blocking;
 
 
 my $version = "0.0.26";
@@ -58,20 +78,30 @@ my $version = "0.0.26";
 sub LoeweTV_Define($$);
 sub LoeweTV_Undef($$);
 sub LoeweTV_Initialize($);
-sub LoeweTV_Get($@);
 sub LoeweTV_Set($@);
 sub LoeweTV_WakeUp_Udp($@);
-sub LoeweTV_CheckAccess($);
-sub LoeweTV_SendRequest($$$);
+sub LoeweTV_SendRequest($$;$$);
 sub LoeweTV_ResponseProcessing($$$);
 sub LoeweTV_WriteReadings($$);
 sub LoeweTV_Presence($);
 sub LoeweTV_PresenceRun($);
 sub LoeweTV_PresenceDone($);
 sub LoeweTV_PresenceAborted($);
+sub LoeweTV_TimerStatusRequest($);
+sub LoeweTV_Attr(@);
+sub LoeweTV_FirstRun($);
+sub LoeweTV_IsPresent($);
+sub LoeweTV_HasAccess($);
+sub LoeweTV_ParseRequestAccess($$);
+
+#########################
+# Globals
 
 
 
+
+#########################
+# TYPE routines
 
 sub LoeweTV_Initialize($) {
     my ($hash) = @_;
@@ -90,7 +120,7 @@ sub LoeweTV_Initialize($) {
                         #"clientid " .
                         #"fcid " .
                         "status:Accepted,Pending,Denied,undef " .
-                        #"connectsuccess:true,false " .
+                        #"hasaccess:true,false " .
                         #"pingresult:down,up " .
                         #"lastersponse " .
                         #"lastchunk " .
@@ -135,9 +165,6 @@ sub LoeweTV_Define($$) {
     $modules{LoeweTV}{defptr}{HOST} = $hash;
     readingsSingleUpdate($hash,'state','initialized',1);
     
-    LoeweTV_Presence($hash);
-    
-    
     if( $init_done ) {
         LoeweTV_Presence($hash);
         InternalTimer( gettimeofday()+5, "LoeweTV_FirstRun", $hash, 0 );
@@ -160,6 +187,8 @@ sub LoeweTV_Undef($$) {
     return undef;
 }
 
+#########################
+# Device Instance routines
 sub LoeweTV_Attr(@) {
 
     my ( $cmd, $name, $attrName, $attrVal ) = @_;
@@ -198,14 +227,14 @@ sub LoeweTV_Attr(@) {
             $hash->{INTERVAL}   = $attrVal;
             RemoveInternalTimer($hash);
             Log3 $name, 3, "LoeweTV ($name) - set interval: $attrVal";
-            LoeweTV_InternalTimerGetDeviceData($hash);
+            LoeweTV_TimerStatusRequest($hash);
         }
 
         elsif( $cmd eq "del" ) {
             $hash->{INTERVAL}   = 15;
             RemoveInternalTimer($hash);
             Log3 $name, 3, "LoeweTV ($name) - delete User interval and set default: 300";
-            LoeweTV_InternalTimerGetDeviceData($hash);
+            LoeweTV_TimerStatusRequest($hash);
         }
     }
 
@@ -215,17 +244,11 @@ sub LoeweTV_Attr(@) {
 sub LoeweTV_FirstRun($) {
 
     my $hash        = shift;
-    
     my $name        = $hash->{NAME};
     
-    
-    if(ReadingsVal($name,'presence','absent') eq 'present') {
-    
-        LoeweTV_CheckAccess($hash);
-        LoeweTV_SendRequest($hash,'GetDeviceData',0);
-        
+    if(LoeweTV_IsPresent( $hash )) {
+        LoeweTV_SendRequest($hash,'GetDeviceData');
     } else {
-    
         readingsSingleUpdate($hash,'state','off',1);
     }
     
@@ -239,54 +262,51 @@ sub LoeweTV_Set($@) {
     
     my ($action,$RCkey);
 
+    my @actionargs;
     
     if( lc $cmd eq 'setactionfield' ) {
 
-    } elsif( lc $cmd eq 'setvolume' ) {
+    } elsif( lc $cmd eq 'volume' ) {
+        return "$cmd needs volume" if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^\d+$/ ) );
+        # value range is between 0 - 999999
+        @actionargs = ( 'SetVolume', $args[0]*9999 );    
     
-    } elsif( lc $cmd eq 'setmute' ) {
-    
-    } elsif( lc $cmd eq 'connect' ) {
-    
+    } elsif( lc $cmd eq 'mute' ) {
+        return "$cmd needs argument on or off " if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^(on|off)$/ ) );
+        @actionargs = ( 'SetMute', ( $args[0] eq "on" )?1:0 );    
+        
     } elsif( lc $cmd eq 'wakeup' ) {
     
         LoeweTV_WakeUp_Udp($hash,$hash->{HOST},$hash->{TVMAC});
         return;
     
+    } elsif( lc $cmd eq 'remotekey' ) {
+        return "$cmd needs argument remote key" if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^\d+$/ ) );
+        @actionargs = ( 'InjectRCKey', $args[0] );    
+    
     } elsif( lc $cmd eq 'access' ) {
-    
-      LoeweTV_CheckAccess($hash);
-    
+        @actionargs = ( 'RequestAccess');    
+    } elsif( lc $cmd eq 'devicedata' ) {
+        @actionargs = ( 'GetDeviceData');    
+   
     } elsif( lc $cmd eq '' ) {
     
     
     } else {
     
-        my $list    = 'SetActionField SetVolume:slider,0,1,100 SetMute:on,off connect:noArg WakeUp:noArg access';
+        my $list    = 'SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg access:noArg deviceData:noArg ';
         
         return "Unknown argument $cmd, choose one of $list";
     }
+
     
+    if ( scalar(@actionargs) > 0 ) {
+      # 
+      return "LoeweTV $name is not present" if( ! LoeweTV_IsPresent( $hash ));
+      LoeweTV_SendRequest($hash,$actionargs[0],$actionargs[1]);
+    }
     
-#     $hash->{helper}{RCkey} = "" if( not defined $hash->{helper}{RCkey} );
-#     
-#     $hash->{helper}{fcid} = "1234" if( not defined $hash->{helper}{fcid} );
-#     
-#     LoeweTV_hostUp($hash);
-# 
-#     
-#     if (! defined $hash->{CLIENTID}){$hash->{CLIENTID} = "?"};
-#     
-#     LoeweTV_CheckAccess($hash,$hash->{CLIENTID},$hash->{FCID});
-#     
-#     if ($hash->{status} eq "accepted") 	{LoeweTV_SendRequest($hash,$action,$RCkey);}
-    
-    
-    
-#JV    LoeweTV_SendRequest($hash,$action,$RCkey) if(ReadingsVal($name,'presence','absent') eq 'present');
-    
-    
-    Log3 $name, 5, "LoeweTV $name: called function LoeweTV_Set()";
+    Log3 $name, 2, "LoeweTV $name: called function LoeweTV_Set()";
     return undef;
 }
 
@@ -295,9 +315,20 @@ sub LoeweTV_TimerStatusRequest($) {
 ### Hier kommen dann die Sachen rein welche alle x Sekunden ausfegührt werden um Infos zu erhalten
 ### presence zum Beispiel
 
-
-
-
+    my $hash        = shift;
+    my $name        = $hash->{NAME};
+    
+    
+    if(LoeweTV_IsPresent( $hash )) {
+#???        LoeweTV_SendRequest($hash,'GetDeviceData');
+      
+    } else {
+        readingsSingleUpdate($hash,'state','off',1);
+    }
+ 
+    if ( $hash->{INTERVAL} > 0 ) {
+      InternalTimer( gettimeofday()+$hash->{INTERVAL}, "LoeweTV_TimerStatusRequest", $hash, 1 );
+    }
 
 }
 
@@ -328,41 +359,92 @@ sub LoeweTV_WakeUp_Udp($@) {
     return 1;
 }
 
-sub LoeweTV_CheckAccess($) {
 
-    my ($hash)      = shift;
-    my $name        = $hash->{NAME};
-    my $n           = 1;
+sub LoeweTV_ParseRequestAccess($$) {
     
-    
-    #while ((ReadingsVal($name,'state','denied') ne "accepted") and ($n<=3)) {
-    
-    #    $n=$n+1;
-        LoeweTV_SendRequest($hash,"RequestAccess",0);
-    #};
-    
-    
-    
-    print "run CHECKACCESS: ".ReadingsVal($name,'state','denied')."   \n";
-    
-    return(ReadingsVal($name,'state','denied'));
-}
-
-sub LoeweTV_SendRequest($$$) {
-
-    my($hash, $action, $RCkey)  = @_;
+    my ($hash,$access)        = @_;
     
     my $name                    = $hash->{NAME};
+ 
+    return if ( ! defined($access) );
+    
+    if ( ( lc $access eq "accepted" ) || ( lc $access eq "full" ) ) {
+      readingsSingleUpdate($hash,'state','connected',1);
+      $hash->{hasaccess} = "true";	
+    } else {
+      Log3 $name, 2, "LoeweTV_ParseRequestAccess $name: not connected";
+      $hash->{hasaccess} = "false";
+      readingsSingleUpdate($hash,'state','disconnected',1);
+    }
+ 
+}    
+# Pars
+#   hash
+#   action 
+#   opt: RCkey - migt be also representing differnt par
+#   opt: retrycount - will be set to 0 if not given (meaning first exec)
+sub LoeweTV_SendRequest($$;$$) {
 
-    my ($message, $response, $request, $userAgent, $noob, $twig2, $content, $handlers);
+    my ( $hash, @args) = @_;
+
+    my ( $action, $RCkey, $retryCount) = @args;
+    my $name = $hash->{NAME};
+  
+    my $ret;
+  
+    Log3 $name, 2, "LoeweTV_SendRequest $name: ";
+    
+    $retryCount = 0 if ( ! defined( $retryCount ) );
+    # increase retrycount for next try
+    $args[3] = $retryCount+1;
+    
+#    my ($message, $response, $request, $userAgent, $noob, $twig2, $content, $handlers);
+    my ($message, $request, $content, $handlers);
     our $result ="";
+    
+    my $actionString = $action.(defined($RCkey)?"  RCkey:".$RCkey.":":"");
+
+    # ??? fill in queuing here
+    
+    # ensure actionQueue exists
+    $hash->{actionQueue} = [] if ( ! defined( $hash->{actionQueue} ) );
+
+    # Queue if not yet retried and currently waiting
+    if ( ( defined( $hash->{doStatus} ) ) && ( $hash->{doStatus} =~ /^WAITING/ ) && (  $retryCount == 0 ) ){
+      # add to queue
+      Log3 $name, 2, "LoeweTV_SendRequest $name: add action to queue - args: ".$actionString;
+      # RequestAccess will always be added to the beginning of the queue
+      if ( ( $action eq "RequestAccess" ) || ( $action eq "RequestAccess" ))  {
+        unshift( @{ $hash->{actionQueue} }, \@args );
+      } else {
+        push( @{ $hash->{actionQueue} }, \@args );
+      }
+      return;
+    }  
+
+    #######################
+    # check authentication otherwise queue the current cmd and do authenticate first
+    if ( ($action ne "RequestAccess") && ( ! LoeweTV_HasAccess($hash) ) ) {
+      # add to queue
+      Log3 $name, 4, "LoeweTV_SendRequest $name: add action to queue - args ".$actionString;
+      push( @{ $hash->{actionQueue} }, \@args );
+      
+      $action = "RequestAccess";
+      $RCkey = undef;
+      # update cmdstring
+      $actionString = $action.(defined($RCkey)?"  RCkey:".$RCkey.":":"");
+    } 
+  
+    $hash->{doStatus} = "WAITING";
+    $hash->{doStatus} .= " retry $retryCount" if ( $retryCount > 0 );
+    
     my %actions = (
-        "RequestAccess"         =>  [sub {$content='<ltv:DeviceType>Apple iPad</ltv:DeviceType>
+        "RequestAccess"         =>  [sub {$content='<ltv:DeviceType>Homeautomation</ltv:DeviceType>
                                         <ltv:DeviceName>FHEM</ltv:DeviceName>
                                         <ltv:DeviceUUID>'.$hash->{TVMAC}.'</ltv:DeviceUUID>
-                                        <ltv:RequesterName>Assist Media App</ltv:RequesterName>'},
+                                        <ltv:RequesterName>FHEM</ltv:RequesterName>'},
                                         {'m:ClientId' => sub {$hash->{CLIENTID} = $_->text_only('m:ClientId')},
-                                        'm:AccessStatus' => sub {readingsSingleUpdate($hash,'state',$_->text_only('m:AccessStatus'),1);},}
+                                        'm:AccessStatus' => sub {LoeweTV_ParseRequestAccess($hash, $_->text_only('m:AccessStatus'));},}
                                     ],
                                     
         "InjectRCKey"           =>  [sub {$content='<InputEventSequence>
@@ -420,30 +502,38 @@ sub LoeweTV_SendRequest($$$) {
                                     ],
     );
 
-    
-    print "STARTING SENDREQUEST: $action   \n";
+   Log3 $name, 2, "STARTING SENDREQUEST: $action";
+   
+   
+   # ??? hash for params need to be moved to initialize
+   
+    my %hu_sr_params = (
+                    url        => "http://".$hash->{HOST}.":905/loewe_tablet_0001",
+                    timeout    => 30,
+                    method     => "POST",
+                    header     => "",
+                    callback   => \&LoeweTV_HU_Callback
+    );
+
+    $hash->{HU_SR_PARAMS} = \%hu_sr_params;
     
     #$action = "GetDeviceData" if( ! defined($action));
     
-    my $header = "<?xml version='1.0' encoding='UTF-8'?>\n<env:Envelope
+    my $xmlheader = "<?xml version='1.0' encoding='UTF-8'?>\n<env:Envelope
         xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\"
         xmlns:ltv=\"urn:loewe.de:RemoteTV:Tablet\">\n<env:Body>\n";
     
     my $action_xml1 = "<ltv:$action>\n";
     
-    my $header2 = "<ltv:fcid>".$hash->{FCID}."</ltv:fcid>
+    my $xmlheader2 = "<ltv:fcid>".$hash->{FCID}."</ltv:fcid>
             <ltv:ClientId>".$hash->{CLIENTID}."</ltv:ClientId>\n";
 
     my $action_xml2 = "\n</ltv:$action>";
     
     my $footer = "\n</env:Body></env:Envelope>\n";
     
-    
-
-
 
     if ($actions{$action}[0]) {
-    
         $actions{$action}[0]->();
         $handlers=$actions{$action}[1];
     
@@ -452,41 +542,128 @@ sub LoeweTV_SendRequest($$$) {
     };
 
     # Aufbau der Messages
-    $message = $header.$action_xml1.$header2.$content.$action_xml2.$footer;
+    $message = $xmlheader.$action_xml1.$xmlheader2.$content.$action_xml2.$footer;
+  
+
+    # construct the HTTP header
     
-    
+    # ??? move to global
+    my $LoeweTV_header = "User-Agent: Assist Media/23 CFNetwork/808 Darwin/16.0.0\r\n".
+      "Accept: */*\r\n".
+      "Accept-Encoding: gzip, deflate\r\n".
+      "Accept-Language: de-de\r\n".
+      "Content-Type: application/soap+xml; charset=utf-8\r\n".
+      "Connection: keep-alive";
+
+    $hash->{HU_SR_PARAMS}->{header} = $LoeweTV_header.
+      "\r\n"."SOAPAction: ".$action;
+
+    $hash->{HU_SR_PARAMS}->{data} = $message;
+
+    $hash->{HU_SR_PARAMS}->{action} = $action;
+
+    $hash->{HU_SR_PARAMS}->{handlers} = $handlers;
+  
+    $hash->{HU_SR_PARAMS}->{hash} = $hash;
+
     # Aufbau der HTTP Verbindung
-    $request = HTTP::Request->new(POST => 'http://'.$hash->{HOST}.':905/loewe_tablet_0001');
+#    $request = HTTP::Request->new(POST => 'http://'.$hash->{HOST}.':905/loewe_tablet_0001');
     
     # Aufbau des Agents
-    $userAgent = LWP::UserAgent->new(agent => 'Assist Media/23 CFNetwork/808 Darwin/16.0.0');
+#    $userAgent = LWP::UserAgent->new(agent => 'Assist Media/23 CFNetwork/808 Darwin/16.0.0');
     
     # Aufbau des Headers
-    $request->header('Accept' => '*/*');
-    $request->header('Accept-Encoding' => 'gzip, deflate');
-    $request->header('Accept-Language' => 'de-de');
-    $request->header('Connection' => 'keep-alive');
+#    $request->header('Accept' => '*/*');
+#    $request->header('Accept-Encoding' => 'gzip, deflate');
+#    $request->header('Accept-Language' => 'de-de');
+#    $request->header('Connection' => 'keep-alive');
     
-    $request->header('SOAPAction' => $action);
+#    $request->header('SOAPAction' => $action);
     
     # !!!
-    $request->content_type("application/soap+xml; charset=utf-8");
+#    $request->content_type("application/soap+xml; charset=utf-8");
     
     # ???
-    $request->content($message);
+#    $request->content($message);
     
     Log3 $name, 2, "Sub LoeweTV_SendRequest ($name) - Request: ".Dumper($message);
     
-    $response = $userAgent->request($request);
+    # send the request non blocking
+    if ( defined( $ret ) ) {
+      Log3 $name, 1, "LoeweTV_SendRequest $name: Failed with :$ret:";
+      LoeweTV_HU_Callback( $hash->{HU_SR_PARAMS}, $ret, "");
+
+    } else {
+      $hash->{HU_DO_PARAMS}->{args} = \@args;
+      
+      Log3 $name, 4, "LoeweTV_SendRequest $name: call url :".$hash->{HU_SR_PARAMS}->{url}.": ";
+      HttpUtils_NonblockingGet( $hash->{HU_SR_PARAMS} );
+
+    }
     
-    $noob = $response->content;
+#    $response = $userAgent->request($request);
     
-    $twig2 = XML::Twig->new(twig_handlers => $handlers,keep_encoding => 1)->parse($noob);
+#    $noob = $response->content;
+    
+#    $twig2 = XML::Twig->new(twig_handlers => $handlers,keep_encoding => 1)->parse($noob);
     
     
-    LoeweTV_ResponseProcessing($hash,$response, $action);
+#    LoeweTV_ResponseProcessing($hash,$response, $action);
 }
+
+
+#####################################
+#  INTERNAL: Callback is the callback for any nonblocking call to the TV
+#   3 params are defined for callbacks
+#     param-hash
+#     err
+#     data (returned from url call)
+# empty string used instead of undef for no return/err value
+sub LoeweTV_HU_Callback($$$)
+{
+  my ( $param, $err, $data ) = @_;
+  my $hash= $param->{hash};
+  my $name = $hash->{NAME};
+
+  Log3 $name, 2, "LoeweTV_HU_Callback $name: ".
+  (defined( $err )?"status err :".$err.":":"no error").
+  "     data :".(( defined( $data ) )?$data:"<undefined>");
+
+  if ( ( $err eq "" ) && ( $param->{code} == 200 ) ) {
+  
+    my $action = $param->{action};
+    my $handlers = $param->{handlers};
+    my $twig2;
+  
+    Log3 $name, 2, "LoeweTV_HU_Callback $name: action: ".$action."   code : ".$param->{code};
+
+    if ( ( defined($data) ) && ( $data ne "" ) ) {
+      Log3 $name, 2, "LoeweTV_HU_Callback $name: handle XML values";
+      $twig2 = XML::Twig->new(twig_handlers => $handlers,keep_encoding => 1)->parse($data);
+    }
     
+    $hash->{lastresponse} = $data;
+  } else {
+    $hash->{lastresponse} = "Error returned: $err";
+  }
+
+  delete( $param->{data} );
+  delete( $param->{code} );
+  
+  $hash->{doStatus} = "";
+
+  #########################
+  # start next command in queue if available
+  if ( ( defined( $hash->{actionQueue} ) ) && ( scalar( @{ $hash->{actionQueue} } ) ) ) {
+    my $ref = shift @{ $hash->{actionQueue} };
+    Log3 $name, 4, "LoeweTV_HU_Callback $name: handle queued cmd with :@$ref[0]: ";
+    LoeweTV_SendRequest( $hash, @$ref[0], @$ref[1], @$ref[2] );
+  }
+  
+
+}
+
+
     
 sub LoeweTV_ResponseProcessing($$$) {
     
@@ -497,13 +674,13 @@ sub LoeweTV_ResponseProcessing($$$) {
     
     if ( ( ! $response->is_error() ) && ($response->code == 200) ) {
         Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: ".Dumper($response->content);
-        $hash->{connectsuccess} = "true";	
+        $hash->{hasaccess} = "true";	
         $hash->{lastresponse} = $response->content;
     
     } else {
         Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: ".Dumper($response->content);
         Log3 $name, 2, "Sub LoeweTV_PresenceRun ($name) - Response: ".Dumper($response->error_as_HTML) if ( $response->is_error() );
-        $hash->{connectsuccess} = "false";
+        $hash->{hasaccess} = "false";
         $hash->{lastresponse} = $response->error_as_HTML;
     }
     
@@ -590,10 +767,16 @@ sub LoeweTV_PresenceAborted($) {
 ####### Presence Erkennung Ende ############
 
 
+############ Helper #################
+sub LoeweTV_IsPresent($) {
+    my $hash = shift;
+    return (ReadingsVal($hash->{NAME},'presence','absent') eq 'present');
+}
 
-
-
-
+sub LoeweTV_HasAccess($) {
+    my $hash = shift;
+    return ( $hash->{hasaccess} eq 'true');
+}
 
 
 1;
