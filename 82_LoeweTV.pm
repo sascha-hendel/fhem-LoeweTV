@@ -7,6 +7,7 @@
 #
 #   Special thanks goes to comitters:
 #       - der.einstein      Thanks for Commit
+#       - viegener          Thanks for Commit
 #
 #
 #  This script is free software; you can redistribute it and/or modify
