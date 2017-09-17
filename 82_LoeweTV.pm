@@ -40,26 +40,31 @@
 ## 0.0.28
 ## - framework to collect data from XML in hash for readings update
 ## - change mac, chassis,version as reading
+## - sendRequest: rename RCkey to a generic param 
+## - sendRequest: allow additional param (also as array)
+## - add getter
+## - add get volume and volume reading
+## - add get mutea and mute reading
+## 0.0.29
+
+##
+##
 ##
 ###############################################################################
 ###############################################################################
 ##  TODO
 ###############################################################################
 ## - 
-## - sendRequest: rename RCkey to a generic param 
-## - sendRequest: allow additional param (also as array)
 ## - 
-## - add getter
-## - add volume and volume reading
-## - regularly get volume / mute
 ## - 
 ## - check channels
 ## - 
+## - regularly get volume / mute
+## - activate timerstatusrequest
+## - start/stop presence and timerstatusrequest on disabled
 ## - 
 ## - calc fcid from uniqueid?
-## - update state consistently
-## - start/stop presence and timerstatusrequest on disabled
-## - activate timerstatusrequest
+## - update state consistently?
 ##
 ## - change log level for logs
 ###############################################################################
@@ -83,7 +88,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.28";
+my $version = "0.0.29";
 
 
 # Declare functions
@@ -91,8 +96,9 @@ sub LoeweTV_Define($$);
 sub LoeweTV_Undef($$);
 sub LoeweTV_Initialize($);
 sub LoeweTV_Set($@);
+sub LoeweTV_Get($@);
 sub LoeweTV_WakeUp_Udp($@);
-sub LoeweTV_SendRequest($$;$$);
+sub LoeweTV_SendRequest($$;$$$);
 sub LoeweTV_Presence($);
 sub LoeweTV_PresenceRun($);
 sub LoeweTV_PresenceDone($);
@@ -116,7 +122,7 @@ sub LoeweTV_ParseRequestAccess($$);
 sub LoeweTV_Initialize($) {
     my ($hash) = @_;
     
-    #$hash->{GetFn}      = "LoeweTV_Get";
+    $hash->{GetFn}      = "LoeweTV_Get";
     $hash->{SetFn}      = "LoeweTV_Set";
     $hash->{DefFn}      = "LoeweTV_Define";
     $hash->{UndefFn}    = "LoeweTV_Undef";
@@ -270,7 +276,7 @@ sub LoeweTV_Set($@) {
     my ($hash, $name, $cmd, @args) = @_;
     my ($arg, @params) = @args;
     
-    my ($action,$RCkey);
+    my ($action,$actPar1, $actPar2);
 
     my @actionargs;
     
@@ -279,7 +285,7 @@ sub LoeweTV_Set($@) {
     } elsif( lc $cmd eq 'volume' ) {
         return "$cmd needs volume" if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^\d+$/ ) );
         # value range is between 0 - 999999
-        @actionargs = ( 'SetVolume', $args[0]*9999 );    
+        @actionargs = ( 'SetVolume', $args[0] );    
     
     } elsif( lc $cmd eq 'mute' ) {
         return "$cmd needs argument on or off " if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^(on|off)$/ ) );
@@ -313,10 +319,46 @@ sub LoeweTV_Set($@) {
     if ( scalar(@actionargs) > 0 ) {
       # 
       return "LoeweTV $name is not present" if( ! LoeweTV_IsPresent( $hash ));
-      LoeweTV_SendRequest($hash,$actionargs[0],$actionargs[1]);
+      LoeweTV_SendRequest($hash,$actionargs[0],$actionargs[1],$actionargs[2]);
     }
     
     Log3 $name, 2, "LoeweTV $name: called function LoeweTV_Set()";
+    return undef;
+}
+
+sub LoeweTV_Get($@) {
+    
+    my ($hash, $name, $cmd, @args) = @_;
+    my ($arg, @params) = @args;
+    
+    my ($action,$actPar1, $actPar2);
+
+    my @actionargs;
+    
+    if( lc $cmd eq 'setactionfield' ) {
+
+    } elsif( lc $cmd eq 'volume' ) {
+        # value range is between 0 - 999999
+        @actionargs = ( 'GetVolume' );    
+    
+    } elsif( lc $cmd eq 'mute' ) {
+        @actionargs = ( 'GetMute' );    
+        
+    } else {
+    
+        my $list    = 'volume:noArg mute:noArg ';
+        
+        return "Unknown argument $cmd, choose one of $list";
+    }
+
+    
+    if ( scalar(@actionargs) > 0 ) {
+      # 
+      return "LoeweTV $name is not present" if( ! LoeweTV_IsPresent( $hash ));
+      LoeweTV_SendRequest($hash,$actionargs[0],$actionargs[1],$actionargs[2]);
+    }
+    
+    Log3 $name, 2, "LoeweTV $name: called function LoeweTV_Get()";
     return undef;
 }
 
@@ -405,13 +447,14 @@ sub LoeweTV_PrepareReading($$$) {
 # Pars
 #   hash
 #   action 
-#   opt: RCkey - migt be also representing differnt par
+#   opt: par1 (RCkey - migt be also representing differnt par)
+#   opt: par2 addtl pars
 #   opt: retrycount - will be set to 0 if not given (meaning first exec)
-sub LoeweTV_SendRequest($$;$$) {
+sub LoeweTV_SendRequest($$;$$$) {
 
     my ( $hash, @args) = @_;
 
-    my ( $action, $RCkey, $retryCount) = @args;
+    my ( $action, $actPar1, $actPar2, $retryCount) = @args;
     my $name = $hash->{NAME};
   
     my $ret;
@@ -426,7 +469,7 @@ sub LoeweTV_SendRequest($$;$$) {
     my ($message, $request, $content, $handlers);
     our $result ="";
     
-    my $actionString = $action.(defined($RCkey)?"  RCkey:".$RCkey.":":"");
+    my $actionString = $action.(defined($actPar1)?"  Par1:".$actPar1.":":"")."  ".(defined($actPar2)?"  Par2:".$actPar2.":":"");
 
     # ensure actionQueue exists
     $hash->{actionQueue} = [] if ( ! defined( $hash->{actionQueue} ) );
@@ -452,9 +495,10 @@ sub LoeweTV_SendRequest($$;$$) {
       push( @{ $hash->{actionQueue} }, \@args );
       
       $action = "RequestAccess";
-      $RCkey = undef;
+      $actPar1 = undef;
+      $actPar2 = undef;
       # update cmdstring
-      $actionString = $action.(defined($RCkey)?"  RCkey:".$RCkey.":":"");
+      $actionString = $action.(defined($actPar1)?"  Par1:".$actPar1.":":"")."  ".(defined($actPar2)?"  Par2:".$actPar2.":":"");
     } 
   
     $hash->{doStatus} = "WAITING";
@@ -470,13 +514,28 @@ sub LoeweTV_SendRequest($$;$$) {
                                     ],
                                     
         "InjectRCKey"           =>  [sub {$content='<InputEventSequence>
-                                        <RCKeyEvent alphabet="l2700" value="'.$RCkey.'" mode="press"/>
-                                        <RCKeyEvent alphabet="l2700" value="'.$RCkey.'" mode="release"/>
+                                        <RCKeyEvent alphabet="l2700" value="'.$actPar1.'" mode="press"/>
+                                        <RCKeyEvent alphabet="l2700" value="'.$actPar1.'" mode="release"/>
                                         </InputEventSequence>'},{"ltv:InjectRCKey" => sub {$hash->{helper}{lastchunk} = $_->text_only();}},],
                                         
-        "GetDeviceData"         =>  [sub {$content='';},{"m:MAC-Address" => sub {LoeweTV_PrepareReading($hash,"TVMAC", $_->text("m:MAC-Address"));},"m:Chassis" => sub {LoeweTV_PrepareReading($hash,"Chassis",$_->text("m:Chassis"));},"m:SW-Version" => sub {LoeweTV_PrepareReading($hash,"SW_Version",$_->text("m:SW-Version"));}}],
+        "GetDeviceData"         =>  [sub {$content='';},
+                                     {"m:MAC-Address" => sub {LoeweTV_PrepareReading($hash,"TVMAC", $_->text("m:MAC-Address"));},"m:Chassis" => sub {LoeweTV_PrepareReading($hash,"Chassis",$_->text("m:Chassis"));},"m:SW-Version" => sub {LoeweTV_PrepareReading($hash,"SW_Version",$_->text("m:SW-Version"));}}],
             
-        "GetChannelList"        =>  [sub {$content="<ltv:ChannelListView>".$RCkey."</ltv:ChannelListView>
+        "SetVolume"             => [sub {$content="<Value>".($actPar1*10000)."</Value>"},
+                                    {"m:Value" => sub {LoeweTV_PrepareReading($hash,"volume", int(($_->text ("m:Value")/10000)+0.5));}}
+                                    ],
+        "GetVolume"             => [sub {$content="";},
+                                    {"m:Value" => sub {LoeweTV_PrepareReading($hash,"volume", int(($_->text ("m:Value")/10000)+0.5));}}
+                                    ],
+        "SetMute"             => [sub {$content="<Value>".$actPar1."</Value>"},
+                                    {"m:Value" => sub {LoeweTV_PrepareReading($hash,"mute", $_->text ("m:Value"));}}
+                                    ],
+            
+        "GetMute"             => [sub {$content=""},
+                                    {"m:Value" => sub {LoeweTV_PrepareReading($hash,"mute", $_->text ("m:Value"));}}
+                                    ],
+########## untested            
+        "GetChannelList"        =>  [sub {$content="<ltv:ChannelListView>".$actPar1."</ltv:ChannelListView>
                                         <ltv:QueryParameters>
                                         <ltv:Range startIndex='".$ARGV[4]."' maxItems='9999'/>
                                         <ltv:OrderField field='userChannelNumber' type='ascending'/>
@@ -484,14 +543,14 @@ sub LoeweTV_SendRequest($$;$$) {
                                     ],
                                         
         "GetListOfChannelLists" =>  [sub {$content="<ltv:QueryParameters>
-                                        <ltv:Range startIndex='".$RCkey."' maxItems='9999'/>
+                                        <ltv:Range startIndex='".$actPar1."' maxItems='9999'/>
                                         <ltv:OrderField field='userChannelNumber' type='ascending'/>
                                         </ltv:QueryParameters>";$result="m:ResultItemChannelLists"}
                                     ],
                                         
-        "GetMediaItem"          =>  [sub {$content='<MediaItemReference mediaItemUuid="'.$RCkey.'"/>';$result="m:ShortInfo"}],
+        "GetMediaItem"          =>  [sub {$content='<MediaItemReference mediaItemUuid="'.$actPar1.'"/>';$result="m:ShortInfo"}],
             
-        "GetMediaEvent"         =>  [sub {$content='<MediaEventReference mediaEventUuid="'.$RCkey.'"/>';$result="m:ShortInfo"}],
+        "GetMediaEvent"         =>  [sub {$content='<MediaEventReference mediaEventUuid="'.$actPar1.'"/>';$result="m:ShortInfo"}],
             
         "GetChannelInfo"        =>  [sub {$content=""}],
             
@@ -507,18 +566,10 @@ sub LoeweTV_SendRequest($$;$$) {
                                         
         "GetNextEvent"          => [sub {$content="<ltv:Player>0</ltv:Player>";$result="m:GetNextEventResponse"}],
             
-        "SetActionField"        => [sub {$content="<ltv:InputText>".$RCkey."</ltv:InputText>";$result="m:Result"}],
-            
-        "SetVolume"             => [sub {$content="<Value>".$RCkey."</Value>";$result="m:Value"}],
-            
-        "GetVolume"             => [sub {$content="";$result="m:Value"}],
-            
-        "SetMute"               => [sub {$content="<Value>".$RCkey."</Value>";$result="m:Value"}],
-            
-        "GetMute"               => [sub {$content="";$result="m:Value"}],
+        "SetActionField"        => [sub {$content="<ltv:InputText>".$actPar1."</ltv:InputText>";$result="m:Result"}],
             
         "GetDRPlusArchive"      => [sub {$content="<ltv:QueryParameters>
-                                        <ltv:Range startIndex='".$RCkey."' maxItems='1000'/>
+                                        <ltv:Range startIndex='".$actPar1."' maxItems='1000'/>
                                         <ltv:OrderField field='userChannelNumber' type='ascending'/>
                                         </ltv:QueryParameters>";$result="ltv:ResultItemDRPlusFragment"}
                                     ],
