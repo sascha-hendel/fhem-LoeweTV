@@ -47,15 +47,19 @@
 ## - add get mutea and mute reading
 ## 0.0.29
 
-##
-##
+## - lists start with 0 (start index)
+## - first tests with channellist / mediatiem
+## - added channellist listofchannellist media item but without result eval
 ##
 ###############################################################################
 ###############################################################################
 ##  TODO
 ###############################################################################
 ## - 
-## - 
+## - handle soap failures
+##    <SOAP-ENV:Body>  <SOAP-ENV:Fault>   <faultcode>Server</faultcode>   <faultstring>URN 'urn:loewe.de:RemoteTV:Tablet' not found</faultstring>   
+##  <faultactor>cSOAP_Server</faultactor>   <detail/>  </SOAP-ENV:Fault> </SOAP-ENV:Body></SOAP-ENV:Envelope>
+##
 ## - 
 ## - check channels
 ## - 
@@ -274,7 +278,6 @@ sub LoeweTV_FirstRun($) {
 sub LoeweTV_Set($@) {
     
     my ($hash, $name, $cmd, @args) = @_;
-    my ($arg, @params) = @args;
     
     my ($action,$actPar1, $actPar2);
 
@@ -329,24 +332,38 @@ sub LoeweTV_Set($@) {
 sub LoeweTV_Get($@) {
     
     my ($hash, $name, $cmd, @args) = @_;
-    my ($arg, @params) = @args;
     
     my ($action,$actPar1, $actPar2);
 
     my @actionargs;
     
-    if( lc $cmd eq 'setactionfield' ) {
-
-    } elsif( lc $cmd eq 'volume' ) {
+    if( lc $cmd eq 'volume' ) {
         # value range is between 0 - 999999
         @actionargs = ( 'GetVolume' );    
     
     } elsif( lc $cmd eq 'mute' ) {
         @actionargs = ( 'GetMute' );    
+
+    } elsif( lc $cmd eq 'currentplayback' ) {
+        @actionargs = ( 'GetCurrentPlayback' );    
+        
+    } elsif( lc $cmd eq 'listofchannellists' ) {
+        $args[0] = 0 if ( ( scalar( @args ) < 1 ) || ( $args[0] !~ /^\d+$/ ) );
+        @actionargs = ( 'GetListOfChannelLists', $args[0] );    
+        
+    } elsif( lc $cmd eq 'channellist' ) {
+        $args[0] = "default" if ( ( scalar( @args ) < 1 ) );
+        $args[1] = 0 if ( ( scalar( @args ) < 2 ) || ( $args[1] !~ /^\d+$/ ) );
+        @actionargs = ( 'GetChannelList', $args[0], $args[1] );    
+        
+    } elsif( lc $cmd eq 'mediaitem' ) {
+        return "$cmd needs a uuid of a media item" if ( scalar( @args ) != 1 );
+        @actionargs = ( 'GetMediaItem', $args[0] );    
+        
         
     } else {
     
-        my $list    = 'volume:noArg mute:noArg ';
+        my $list    = 'volume:noArg mute:noArg currentplayback:noArg listofchannellists channellist mediaitem';
         
         return "Unknown argument $cmd, choose one of $list";
     }
@@ -471,6 +488,8 @@ sub LoeweTV_SendRequest($$;$$$) {
     
     my $actionString = $action.(defined($actPar1)?"  Par1:".$actPar1.":":"")."  ".(defined($actPar2)?"  Par2:".$actPar2.":":"");
 
+    Log3 $name, 2, "LoeweTV_SendRequest $name: called with action ".$actionString;
+    
     # ensure actionQueue exists
     $hash->{actionQueue} = [] if ( ! defined( $hash->{actionQueue} ) );
 
@@ -534,30 +553,31 @@ sub LoeweTV_SendRequest($$;$$$) {
         "GetMute"             => [sub {$content=""},
                                     {"m:Value" => sub {LoeweTV_PrepareReading($hash,"mute", $_->text ("m:Value"));}}
                                     ],
-########## untested            
+########## in progress            
+        "GetCurrentPlayback"    =>  [sub {$content='';},
+                                        {"m:Locator" => sub {$hash->{helper}{lastchunk} = $_->text_only();},}
+                                    ],
+                                        
         "GetChannelList"        =>  [sub {$content="<ltv:ChannelListView>".$actPar1."</ltv:ChannelListView>
                                         <ltv:QueryParameters>
-                                        <ltv:Range startIndex='".$ARGV[4]."' maxItems='9999'/>
+                                        <ltv:Range startIndex='".(defined($actPar2)?$actPar2:0)."' maxItems='".((defined($actPar2)?$actPar2:1)+100)."'/>
                                         <ltv:OrderField field='userChannelNumber' type='ascending'/>
                                         </ltv:QueryParameters>";$result="m:GetChannelListResponse"}
                                     ],
                                         
         "GetListOfChannelLists" =>  [sub {$content="<ltv:QueryParameters>
-                                        <ltv:Range startIndex='".$actPar1."' maxItems='9999'/>
+                                        <ltv:Range startIndex='".$actPar1."' maxItems='".($actPar1+100)."'/>
                                         <ltv:OrderField field='userChannelNumber' type='ascending'/>
                                         </ltv:QueryParameters>";$result="m:ResultItemChannelLists"}
                                     ],
                                         
         "GetMediaItem"          =>  [sub {$content='<MediaItemReference mediaItemUuid="'.$actPar1.'"/>';$result="m:ShortInfo"}],
             
+########## untested            
         "GetMediaEvent"         =>  [sub {$content='<MediaEventReference mediaEventUuid="'.$actPar1.'"/>';$result="m:ShortInfo"}],
             
         "GetChannelInfo"        =>  [sub {$content=""}],
             
-        "GetCurrentPlayback"    =>  [sub {$content='';},
-                                        {"m:Locator" => sub {$hash->{helper}{lastchunk} = $_->text_only();},}
-                                    ],
-                                        
         "GetCurrentEvent"       =>  [sub {$content="<ltv:Player>0</ltv:Player>";},
                                         {"m:Name" => sub {$hash->{curevent}[0] = $_->text("m:Name");},
                                         "m:ExtendedInfo" => sub {$hash->{curevent}[1] = $_->text("m:ExtendenInfo");},
