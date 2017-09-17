@@ -38,7 +38,8 @@
 ## - RequestAccess status as reading --> access - accepted
 ## - removed LoeweTV_ResponseProcessing
 ## 0.0.28
-##
+## - framework to collect data from XML in hash for readings update
+## - change mac, chassis,version as reading
 ##
 ###############################################################################
 ###############################################################################
@@ -47,14 +48,20 @@
 ## - 
 ## - sendRequest: rename RCkey to a generic param 
 ## - sendRequest: allow additional param (also as array)
-## - collect data from XML in hash for readings update
+## - 
+## - add getter
+## - add volume and volume reading
+## - regularly get volume / mute
+## - 
+## - check channels
+## - 
 ## - 
 ## - calc fcid from uniqueid?
 ## - update state consistently
 ## - start/stop presence and timerstatusrequest on disabled
 ## - activate timerstatusrequest
 ##
-## - 
+## - change log level for logs
 ###############################################################################
 
 
@@ -86,7 +93,6 @@ sub LoeweTV_Initialize($);
 sub LoeweTV_Set($@);
 sub LoeweTV_WakeUp_Udp($@);
 sub LoeweTV_SendRequest($$;$$);
-sub LoeweTV_WriteReadings($$);
 sub LoeweTV_Presence($);
 sub LoeweTV_PresenceRun($);
 sub LoeweTV_PresenceDone($);
@@ -382,6 +388,20 @@ sub LoeweTV_ParseRequestAccess($$) {
     }
  
 }    
+
+
+sub LoeweTV_PrepareReading($$$) {
+    
+    my ($hash,$rname, $rvalue)        = @_;
+    
+    my $name                    = $hash->{NAME};
+ 
+    my $refreadings = $hash->{HU_SR_PARAMS}->{SR_READINGS};
+    
+    Log3 $name, 2, "LoeweTV_PrepareReading $name: reading: ".$rname."   value :".$rvalue.":";
+    $refreadings->{$rname} = $rvalue;
+}
+ 
 # Pars
 #   hash
 #   action 
@@ -408,8 +428,6 @@ sub LoeweTV_SendRequest($$;$$) {
     
     my $actionString = $action.(defined($RCkey)?"  RCkey:".$RCkey.":":"");
 
-    # ??? fill in queuing here
-    
     # ensure actionQueue exists
     $hash->{actionQueue} = [] if ( ! defined( $hash->{actionQueue} ) );
 
@@ -456,7 +474,7 @@ sub LoeweTV_SendRequest($$;$$) {
                                         <RCKeyEvent alphabet="l2700" value="'.$RCkey.'" mode="release"/>
                                         </InputEventSequence>'},{"ltv:InjectRCKey" => sub {$hash->{helper}{lastchunk} = $_->text_only();}},],
                                         
-        "GetDeviceData"         =>  [sub {$content='';},{"m:MAC-Address" => sub {$hash->{TVMAC} = $_->text("m:MAC-Address");},"m:Chassis" => sub {$hash->{Chassis} = $_->text("m:Chassis");},"m:SW-Version" => sub {$hash->{SW_Version} = $_->text("m:SW-Version");}}],
+        "GetDeviceData"         =>  [sub {$content='';},{"m:MAC-Address" => sub {LoeweTV_PrepareReading($hash,"TVMAC", $_->text("m:MAC-Address"));},"m:Chassis" => sub {LoeweTV_PrepareReading($hash,"Chassis",$_->text("m:Chassis"));},"m:SW-Version" => sub {LoeweTV_PrepareReading($hash,"SW_Version",$_->text("m:SW-Version"));}}],
             
         "GetChannelList"        =>  [sub {$content="<ltv:ChannelListView>".$RCkey."</ltv:ChannelListView>
                                         <ltv:QueryParameters>
@@ -520,6 +538,10 @@ sub LoeweTV_SendRequest($$;$$) {
     );
 
     $hash->{HU_SR_PARAMS} = \%hu_sr_params;
+    
+    # create hash for storing readings for update
+    my %hu_sr_readings = ();
+    $hash->{HU_SR_PARAMS}->{SR_READINGS} = \%hu_sr_readings;
     
     #$action = "GetDeviceData" if( ! defined($action));
     
@@ -629,13 +651,21 @@ sub LoeweTV_HU_Callback($$$)
   my $hash= $param->{hash};
   my $name = $hash->{NAME};
 
-  Log3 $name, 2, "LoeweTV_HU_Callback $name: ".
-  (defined( $err )?"status err :".$err.":":"no error").
-  "     data :".(( defined( $data ) )?$data:"<undefined>");
+  my $ret;
+  my $action = $param->{action};
 
-  if ( ( $err eq "" ) && ( $param->{code} == 200 ) ) {
+  Log3 $name, 2, "LoeweTV_HU_Callback $name: ".
+    (defined( $err )?"status err :".$err.":":"no error").
+    "     data :".(( defined( $data ) )?$data:"<undefined>");
+
+  if ( $err ne "" ) {
+    $ret = "Error returned: $err";
+    $hash->{lastresponse} = $ret;
+  } elsif ( $param->{code} != 200 ) {
+    $ret = "HTTP-Error returned: ".$param->{code};
+    $hash->{lastresponse} = $ret;
+  } else {
   
-    my $action = $param->{action};
     my $handlers = $param->{handlers};
     my $twig2;
   
@@ -647,10 +677,29 @@ sub LoeweTV_HU_Callback($$$)
     }
     
     $hash->{lastresponse} = $data;
-  } else {
-    $hash->{lastresponse} = "Error returned: $err";
+    $ret = "SUCCESS";
   }
 
+  # handle readings
+  readingsBeginUpdate($hash);
+  readingsBulkUpdate($hash, "requestAction", $action );   
+  readingsBulkUpdate($hash, "requestResult", $ret );   
+  
+  if ( $ret eq  "SUCCESS" ) {
+    Log3 $name, 2, "LoeweTV_HU_Callback $name: update readings";
+    my $refreadings = $param->{SR_READINGS};
+    foreach my $readName ( keys %$refreadings ) {
+      Log3 $name, 2, "LoeweTV_HU_Callback $name: reading: ".$readName."   value :".$refreadings->{$readName}.":";
+      if ( defined( $refreadings->{$readName} ) ) {
+        readingsBulkUpdate($hash, $readName, $refreadings->{$readName} );        
+      } else {
+        delete($hash->{READINGS}{$readName}); 
+      }
+    }
+  }
+  readingsEndUpdate($hash, 1);   
+  
+  # clean param hash
   delete( $param->{data} );
   delete( $param->{code} );
   
@@ -669,12 +718,6 @@ sub LoeweTV_HU_Callback($$$)
 
     
 
-sub LoeweTV_WriteReadings($$) {
-
-
-
-
-}
 
 ############ Presence Erkennung Begin #################
 sub LoeweTV_Presence($) {
