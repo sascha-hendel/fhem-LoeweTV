@@ -50,6 +50,8 @@
 ## - lists start with 0 (start index)
 ## - first tests with channellist / mediatiem
 ## - added channellist listofchannellist media item but without result eval
+## 0.0.30
+
 ##
 ###############################################################################
 ###############################################################################
@@ -92,7 +94,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.29";
+my $version = "0.0.30";
 
 
 # Declare functions
