@@ -52,11 +52,23 @@
 ## - added channellist listofchannellist media item but without result eval
 ## 0.0.30
 
+## 0.0.31
+  
+## - clean some old code
+## - honor attribute channellist for get channellist 
+## - grab channel and automatically extend list and queue getmediatiems
+## 0.0.32
+  
 ##
 ###############################################################################
 ###############################################################################
 ##  TODO
 ###############################################################################
+## - 
+## - store mediaitem information 
+## - 
+## - 
+## - grab channel list of lists 
 ## - 
 ## - handle soap failures
 ##    <SOAP-ENV:Body>  <SOAP-ENV:Fault>   <faultcode>Server</faultcode>   <faultstring>URN 'urn:loewe.de:RemoteTV:Tablet' not found</faultstring>   
@@ -94,7 +106,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.31";
+my $version = "0.0.32";
 
 
 # Declare functions
@@ -135,6 +147,7 @@ sub LoeweTV_Initialize($) {
 
     $hash->{AttrList}   =  "fhemMAC " .
                         "interval " .
+                        "channellist " .
                         #"ip " .
                         #"tvmac " .
                         #"action " .
@@ -258,6 +271,7 @@ sub LoeweTV_Attr(@) {
             Log3 $name, 3, "LoeweTV ($name) - delete User interval and set default: 300";
             LoeweTV_TimerStatusRequest($hash);
         }
+        
     }
 
     return undef;
@@ -354,7 +368,7 @@ sub LoeweTV_Get($@) {
         @actionargs = ( 'GetListOfChannelLists', $args[0] );    
         
     } elsif( lc $cmd eq 'channellist' ) {
-        $args[0] = "default" if ( ( scalar( @args ) < 1 ) );
+        $args[0] = AttrVal($name,"channellist","default") if ( ( scalar( @args ) < 1 ) );
         $args[1] = 0 if ( ( scalar( @args ) < 2 ) || ( $args[1] !~ /^\d+$/ ) );
         @actionargs = ( 'GetChannelList', $args[0], $args[1] );    
         
@@ -448,7 +462,66 @@ sub LoeweTV_ParseRequestAccess($$) {
       readingsSingleUpdate($hash,'state','disconnected',1);
     }
  
-}    
+} 
+
+
+# handle channel list
+# call GetChannelList with listid
+#   on ChannelListView --> get the list id --> remember in hash
+#   on ResultItemFragment --> gain attributes --> sequenceNumber="9076679" totalResults="100" returnedResults="100" startIndex="0"
+#       if start at 0 --> clean current table
+#       if not complete --> queue next trunk startindex+100
+#   on ResultItemReference --> queue GetMediaItems for uuid in mediaItemUuid
+sub LoeweTV_ChannelList_Reference($$) {
+    my ($hash,$reference)  = @_;
+    
+    my $name                    = $hash->{NAME};
+ 
+    Log3 $name, 2, "LoeweTV_ChannelList_Reference $name: Reference: ".$reference;
+    
+    LoeweTV_SendRequest($hash, 'GetMediaItem', $reference );
+}
+
+sub LoeweTV_ChannelList_Fragment($$$$$) {
+    my ($hash,$sequence,$total,$returned,$start)  = @_;
+    
+    my $name                    = $hash->{NAME};
+ 
+    Log3 $name, 2, "LoeweTV_ChannelList_Fragment $name: Sequence: ".$sequence."  Counts: ".$start."-".$returned."  (".$total.")";
+    
+    my $channelist = $hash->{helper}{ChannelListView};
+    
+    if ( $start == 0 ) {
+      Log3 $name, 2, "LoeweTV_ChannelList_Fragment $name: new list started empty old list";
+      # delete current content if content returned
+      if ( $returned != 0 ) {
+          delete( $hash->{helper}{ChannelList} );
+          my %tmp = ();
+          $hash->{helper}{ChannelList} = \%tmp;
+      }
+    } 
+    
+    
+    if ( $returned == 100 ) {
+      Log3 $name, 2, "LoeweTV_ChannelList_Fragment $name: queue next request";
+      # not yet complete queue the next request
+      LoeweTV_SendRequest($hash, 'GetChannelList', $channelist, $start + $returned );
+    }
+    
+}
+
+
+sub LoeweTV_ChannelList_View($$) {
+    my ($hash,$channelist)        = @_;
+    
+    my $name                    = $hash->{NAME};
+ 
+    Log3 $name, 2, "LoeweTV_ChannelList_View $name: List: ".$channelist;
+    
+    $hash->{helper}{ChannelListView} = $channelist;
+}
+
+
 
 
 sub LoeweTV_PrepareReading($$$) {
@@ -562,9 +635,12 @@ sub LoeweTV_SendRequest($$;$$$) {
                                         
         "GetChannelList"        =>  [sub {$content="<ltv:ChannelListView>".$actPar1."</ltv:ChannelListView>
                                         <ltv:QueryParameters>
-                                        <ltv:Range startIndex='".(defined($actPar2)?$actPar2:0)."' maxItems='".((defined($actPar2)?$actPar2:1)+100)."'/>
+                                        <ltv:Range startIndex='".(defined($actPar2)?$actPar2:0)."' maxItems='100'/>
                                         <ltv:OrderField field='userChannelNumber' type='ascending'/>
-                                        </ltv:QueryParameters>";$result="m:GetChannelListResponse"}
+                                        </ltv:QueryParameters>";$result="m:GetChannelListResponse"},
+                                        {"m:ChannelListView" => sub { LoeweTV_ChannelList_View( $hash, $_->text_only('m:AccessStatus') );},
+                                          "m:ResultItemFragment" => sub { LoeweTV_ChannelList_Fragment( $hash, $_->att("sequenceNumber"), $_->att("totalResults"), $_->att("returnedResults"), $_->att("startIndex") );},
+                                        "m:ResultItemReference" => sub { LoeweTV_ChannelList_Reference( $hash, $_->att("mediaItemUuid") );}}
                                     ],
                                         
         "GetListOfChannelLists" =>  [sub {$content="<ltv:QueryParameters>
@@ -665,26 +741,6 @@ sub LoeweTV_SendRequest($$;$$$) {
   
     $hash->{HU_SR_PARAMS}->{hash} = $hash;
 
-    # Aufbau der HTTP Verbindung
-#    $request = HTTP::Request->new(POST => 'http://'.$hash->{HOST}.':905/loewe_tablet_0001');
-    
-    # Aufbau des Agents
-#    $userAgent = LWP::UserAgent->new(agent => 'Assist Media/23 CFNetwork/808 Darwin/16.0.0');
-    
-    # Aufbau des Headers
-#    $request->header('Accept' => '*/*');
-#    $request->header('Accept-Encoding' => 'gzip, deflate');
-#    $request->header('Accept-Language' => 'de-de');
-#    $request->header('Connection' => 'keep-alive');
-    
-#    $request->header('SOAPAction' => $action);
-    
-    # !!!
-#    $request->content_type("application/soap+xml; charset=utf-8");
-    
-    # ???
-#    $request->content($message);
-    
     Log3 $name, 2, "Sub LoeweTV_SendRequest ($name) - Request: ".Dumper($message);
     
     # send the request non blocking
@@ -699,15 +755,6 @@ sub LoeweTV_SendRequest($$;$$$) {
       HttpUtils_NonblockingGet( $hash->{HU_SR_PARAMS} );
 
     }
-    
-#    $response = $userAgent->request($request);
-    
-#    $noob = $response->content;
-    
-#    $twig2 = XML::Twig->new(twig_handlers => $handlers,keep_encoding => 1)->parse($noob);
-    
-    
-#    LoeweTV_ResponseProcessing($hash,$response, $action);
 }
 
 
