@@ -94,7 +94,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.30";
+my $version = "0.0.31";
 
 
 # Declare functions
@@ -298,7 +298,7 @@ sub LoeweTV_Set($@) {
         
     } elsif( lc $cmd eq 'wakeup' ) {
     
-        LoeweTV_WakeUp_Udp($hash,$hash->{HOST},$hash->{TVMAC});
+        LoeweTV_WakeUp_Udp($hash,$hash->{TVMAC},$hash->{HOST});
         return;
     
     } elsif( lc $cmd eq 'remotekey' ) {
