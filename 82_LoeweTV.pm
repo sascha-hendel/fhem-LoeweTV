@@ -109,7 +109,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.33";
+my $version = "0.0.34";
 
 
 # Declare functions
@@ -303,13 +303,18 @@ sub LoeweTV_Set($@) {
     my @actionargs;
     
     if( lc $cmd eq 'setactionfield' ) {
+    
+        return "$cmd needs text to show" if ( ( scalar( @args ) != 1 ) );
+        @actionargs = ( 'SetActionField', $args[0] );
 
     } elsif( lc $cmd eq 'volume' ) {
+    
         return "$cmd needs volume" if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^\d+$/ ) );
         # value range is between 0 - 999999
         @actionargs = ( 'SetVolume', $args[0] );    
     
     } elsif( lc $cmd eq 'mute' ) {
+    
         return "$cmd needs argument on or off " if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^(on|off)$/ ) );
         @actionargs = ( 'SetMute', ( $args[0] eq "on" )?1:0 );    
         
@@ -319,20 +324,26 @@ sub LoeweTV_Set($@) {
         return;
     
     } elsif( lc $cmd eq 'remotekey' ) {
+    
         return "$cmd needs argument remote key" if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^\d+$/ ) );
         @actionargs = ( 'InjectRCKey', $args[0] );    
     
     } elsif( lc $cmd eq 'access' ) {
+    
         @actionargs = ( 'RequestAccess');    
+        
     } elsif( lc $cmd eq 'devicedata' ) {
+    
         @actionargs = ( 'GetDeviceData');    
    
-    } elsif( lc $cmd eq '' ) {
+    } elsif( lc $cmd eq 'switchto' ) {
     
+        return "$cmd needs locator" if ( ( scalar( @args ) != 1 ) );
+        @actionargs = ( 'ZapToMedia', $args[0] );
     
     } else {
     
-        my $list    = 'SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg access:noArg deviceData:noArg ';
+        my $list    = 'SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg access:noArg deviceData:noArg switchto ';
         
         return "Unknown argument $cmd, choose one of $list";
     }
@@ -357,32 +368,45 @@ sub LoeweTV_Get($@) {
     my @actionargs;
     
     if( lc $cmd eq 'volume' ) {
+    
         # value range is between 0 - 999999
         @actionargs = ( 'GetVolume' );    
     
     } elsif( lc $cmd eq 'mute' ) {
+    
         @actionargs = ( 'GetMute' );    
 
     } elsif( lc $cmd eq 'currentplayback' ) {
+    
         @actionargs = ( 'GetCurrentPlayback' );    
         
     } elsif( lc $cmd eq 'listofchannellists' ) {
+    
         $args[0] = 0 if ( ( scalar( @args ) < 1 ) || ( $args[0] !~ /^\d+$/ ) );
         @actionargs = ( 'GetListOfChannelLists', $args[0] );    
         
     } elsif( lc $cmd eq 'channellist' ) {
+    
         $args[0] = AttrVal($name,"channellist","default") if ( ( scalar( @args ) < 1 ) );
         $args[1] = 0 if ( ( scalar( @args ) < 2 ) || ( $args[1] !~ /^\d+$/ ) );
         @actionargs = ( 'GetChannelList', $args[0], $args[1] );    
         
     } elsif( lc $cmd eq 'mediaitem' ) {
+    
         return "$cmd needs a uuid of a media item" if ( scalar( @args ) != 1 );
         @actionargs = ( 'GetMediaItem', $args[0] );    
         
+    } elsif( lc $cmd eq 'currentevent' ) {
+    
+        @actionargs = ( 'GetCurrentEvent' );
+        
+    } elsif( lc $cmd eq 'nextevent' ) {
+    
+        @actionargs = ( 'GetNextEvent' );
         
     } else {
     
-        my $list    = 'volume:noArg mute:noArg currentplayback:noArg listofchannellists channellist mediaitem';
+        my $list    = 'volume:noArg mute:noArg currentplayback:noArg listofchannellists channellist mediaitem currentevent:noArg nextevent:noArg';
         
         return "Unknown argument $cmd, choose one of $list";
     }
@@ -660,12 +684,18 @@ sub LoeweTV_SendRequest($$;$$$) {
         "GetChannelInfo"        =>  [sub {$content=""}],
             
         "GetCurrentEvent"       =>  [sub {$content="<ltv:Player>0</ltv:Player>";},
-                                        {"m:Name" => sub {$hash->{curevent}[0] = $_->text("m:Name");},
-                                        "m:ExtendedInfo" => sub {$hash->{curevent}[1] = $_->text("m:ExtendenInfo");},
-                                        "m:Locator" => sub {$hash->{curlocator} = $_->text_only("m:Locator");}},
+                                        {"m:Name" => sub {LoeweTV_PrepareReading($hash,"CurrentEvent_Name", $_->text("m:Name"));},
+                                        "m:ExtendedInfo" => sub {LoeweTV_PrepareReading($hash,"CurrentEvent_Info",$_->text("m:ExtendedInfo"));},
+                                        "m:Locator" => sub {LoeweTV_PrepareReading($hash,"CurrentEvent_Locator",$_->text("m:Locator"));}}],
                                     ],
                                         
-        "GetNextEvent"          => [sub {$content="<ltv:Player>0</ltv:Player>";$result="m:GetNextEventResponse"}],
+        "GetNextEvent"          => [sub {$content="<ltv:Player>0</ltv:Player>";},
+                                        {"m:Name" => sub {LoeweTV_PrepareReading($hash,"NextEvent_Name", $_->text("m:Name"));},
+                                        "m:ExtendedInfo" => sub {LoeweTV_PrepareReading($hash,"NextEvent_Info",$_->text("m:ExtendedInfo"));},
+                                        "m:Locator" => sub {LoeweTV_PrepareReading($hash,"NextEvent_Locator",$_->text("m:Locator"));}}],
+                                        
+        "ZapToMedia"            => [sub {$content="<ltv:Player>0</ltv:Player><ltv:Locator>".$actPar1."</ltv:Locator>";},
+                                        {"ltv:Result" => sub {$result="ltv:Result",$_->text("ltv:Result");}}],
             
         "SetActionField"        => [sub {$content="<ltv:InputText>".$actPar1."</ltv:InputText>";$result="m:Result"}],
             
