@@ -58,6 +58,9 @@
 ## - honor attribute channellist for get channellist 
 ## - grab channel and automatically extend list and queue getmediatiems
 ## 0.0.32
+
+## - add wake on lan support
+## 0.0.33
   
 ##
 ###############################################################################
@@ -106,7 +109,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.32";
+my $version = "0.0.33";
 
 
 # Declare functions
@@ -312,7 +315,7 @@ sub LoeweTV_Set($@) {
         
     } elsif( lc $cmd eq 'wakeup' ) {
     
-        LoeweTV_WakeUp_Udp($hash,$hash->{TVMAC},$hash->{HOST});
+        LoeweTV_WakeUp_Udp($hash,$hash->{TVMAC},'255.255.255.255') if( defined($hash->{TVMAC}) );
         return;
     
     } elsif( lc $cmd eq 'remotekey' ) {
@@ -423,12 +426,12 @@ sub LoeweTV_WakeUp_Udp($@) {
     my ($hash,$mac_addr,$host,$port) = @_;
     my $name  = $hash->{NAME};
 
-    # use the discard service if $port not passed in
-    if (!defined $port || $port !~ /^\d+$/ ) { $port = 9 }
+
+    $port = 9 if (!defined $port || $port !~ /^\d+$/ );
 
     my $sock = new IO::Socket::INET(Proto=>'udp') or die "socket : $!";
     if(!$sock) {
-        Log3 $name, 3, "LoeweTV ($name) - Can't create WOL socket";
+        Log3 $name, 3, "Sub LGTV_WebOS_WakeUp_Udp ($name) - Can't create WOL socket";
         return 1;
     }
   
