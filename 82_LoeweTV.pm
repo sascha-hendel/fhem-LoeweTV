@@ -114,7 +114,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.34";
+my $version = "0.0.35";
 
 
 # Declare functions
@@ -813,7 +813,7 @@ sub LoeweTV_HU_Callback($$$)
       if ( defined( $refreadings->{$readName} ) ) {
         readingsBulkUpdate($hash, $readName, $refreadings->{$readName} );        
       } else {
-        delete($hash->{READINGS}{$readName}); 
+        CommandDeleteReading(undef,"$name $readName");
       }
     }
   }
