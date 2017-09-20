@@ -67,7 +67,12 @@
 ## - new attr maxchannel to limit number of channels loaded
 ## 0.0.35
 
-## - 
+## - change log level for logs
+## - avoid endless loop for requestaccess 
+## - connect as new set (for access) / devicedata+access in get
+## - return channellist in sequence of original channel list return
+## 0.0.36
+
 ## - 
 ##
 ###############################################################################
@@ -92,7 +97,6 @@
 ## - calc fcid from uniqueid?
 ## - update state consistently?
 ##
-## - change log level for logs
 ###############################################################################
 
 
@@ -114,7 +118,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.35";
+my $version = "0.0.36";
 
 
 # Declare functions
@@ -274,13 +278,13 @@ sub LoeweTV_Attr(@) {
     
     elsif( $attrName eq "disabledForIntervals" ) {
         if( $cmd eq "set" ) {
-            Log3 $name, 3, "LoeweTV ($name) - enable disabledForIntervals";
+            Log3 $name, 4, "LoeweTV ($name) - enable disabledForIntervals";
             readingsSingleUpdate ( $hash, "state", "Unknown", 1 );
         }
 
         elsif( $cmd eq "del" ) {
             readingsSingleUpdate ( $hash, "state", "active", 1 );
-            Log3 $name, 3, "LoeweTV ($name) - delete disabledForIntervals";
+            Log3 $name, 4, "LoeweTV ($name) - delete disabledForIntervals";
         }
     }
     
@@ -288,14 +292,14 @@ sub LoeweTV_Attr(@) {
         if( $cmd eq "set" ) {
             $hash->{INTERVAL}   = $attrVal;
             RemoveInternalTimer($hash);
-            Log3 $name, 3, "LoeweTV ($name) - set interval: $attrVal";
+            Log3 $name, 4, "LoeweTV ($name) - set interval: $attrVal";
             LoeweTV_TimerStatusRequest($hash);
         }
 
         elsif( $cmd eq "del" ) {
             $hash->{INTERVAL}   = 15;
             RemoveInternalTimer($hash);
-            Log3 $name, 3, "LoeweTV ($name) - delete User interval and set default: 300";
+            Log3 $name, 4, "LoeweTV ($name) - delete User interval and set default: 300";
             LoeweTV_TimerStatusRequest($hash);
         }
         
@@ -349,10 +353,8 @@ sub LoeweTV_Set($@) {
         return "$cmd needs argument remote key" if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^\d+$/ ) );
         @actionargs = ( 'InjectRCKey', $args[0] );    
     
-    } elsif( lc $cmd eq 'access' ) {
+    } elsif( lc $cmd eq 'connect' ) {
         @actionargs = ( 'RequestAccess');    
-    } elsif( lc $cmd eq 'devicedata' ) {
-        @actionargs = ( 'GetDeviceData');    
    
     } elsif( lc $cmd eq 'switchto' ) {
     
@@ -361,7 +363,7 @@ sub LoeweTV_Set($@) {
     
     } else {
     
-        my $list    = 'SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg access:noArg deviceData:noArg switchto ';
+        my $list    = 'SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg deviceData:noArg switchto ';
         
         return "Unknown argument $cmd, choose one of $list";
     }
@@ -373,7 +375,7 @@ sub LoeweTV_Set($@) {
       LoeweTV_SendRequest($hash,$actionargs[0],$actionargs[1],$actionargs[2]);
     }
     
-    Log3 $name, 2, "LoeweTV $name: called function LoeweTV_Set()";
+    Log3 $name, 4, "LoeweTV $name: called function LoeweTV_Set()";
     return undef;
 }
 
@@ -388,6 +390,12 @@ sub LoeweTV_Get($@) {
     if( lc $cmd eq 'showchannellist' ) {
       return LoeweTV_ChannelListText( $hash );
       
+    } elsif( lc $cmd eq 'access' ) {
+        @actionargs = ( 'RequestAccess');    
+        
+    } elsif( lc $cmd eq 'devicedata' ) {
+        @actionargs = ( 'GetDeviceData');    
+   
     } elsif( lc $cmd eq 'volume' ) {
         # value range is between 0 - 999999
         @actionargs = ( 'GetVolume' );    
@@ -414,6 +422,12 @@ sub LoeweTV_Get($@) {
         return "$cmd needs a uuid of a media item" if ( scalar( @args ) != 1 );
         @actionargs = ( 'GetMediaItem', $args[0] );    
         
+    } elsif( lc $cmd eq 'access' ) {
+        @actionargs = ( 'RequestAccess');    
+        
+    } elsif( lc $cmd eq 'devicedata' ) {
+        @actionargs = ( 'GetDeviceData');    
+   
     } elsif( lc $cmd eq 'currentevent' ) {
     
         @actionargs = ( 'GetCurrentEvent' );
@@ -424,7 +438,9 @@ sub LoeweTV_Get($@) {
         
     } else {
     
-        my $list    = 'volume:noArg mute:noArg currentplayback:noArg listofchannellists channellist mediaitem currentevent:noArg nextevent:noArg showchannellist:noArg';
+        my $list    = 'volume:noArg mute:noArg currentplayback:noArg ".
+              "access:noArg devicedata:noArg ".
+              "listofchannellists channellist mediaitem currentevent:noArg nextevent:noArg showchannellist:noArg';
         
         return "Unknown argument $cmd, choose one of $list";
     }
@@ -436,7 +452,7 @@ sub LoeweTV_Get($@) {
       LoeweTV_SendRequest($hash,$actionargs[0],$actionargs[1],$actionargs[2]);
     }
     
-    Log3 $name, 2, "LoeweTV $name: called function LoeweTV_Get()";
+    Log3 $name, 4, "LoeweTV $name: called function LoeweTV_Get()";
     return undef;
 }
 
@@ -473,7 +489,7 @@ sub LoeweTV_WakeUp_Udp($@) {
 
     my $sock = new IO::Socket::INET(Proto=>'udp') or die "socket : $!";
     if(!$sock) {
-        Log3 $name, 3, "Sub LGTV_WebOS_WakeUp_Udp ($name) - Can't create WOL socket";
+        Log3 $name, 2, "Sub LoeweTV_WakeUp_Udp ($name) - Can't create WOL socket";
         return 1;
     }
   
@@ -501,6 +517,11 @@ sub LoeweTV_ParseRequestAccess($$) {
     if ( ( lc $access eq "accepted" ) ) {
       readingsSingleUpdate($hash,'state','connected',1);
       readingsSingleUpdate($hash,'access','accepted',1);
+    } elsif ( ( lc $access eq "pending" ) ) {
+      readingsSingleUpdate($hash,'state','connected',1);
+      readingsSingleUpdate($hash,'access','pending',1);
+      # queue another request on pending
+      LoeweTV_SendRequest($hash,'RequestAccess');
     } else {
       Log3 $name, 2, "LoeweTV_ParseRequestAccess $name: not connected";
       readingsSingleUpdate($hash,'access',$access,1);
@@ -521,7 +542,7 @@ sub LoeweTV_PrepareReading($$$) {
  
     my $refreadings = $hash->{HU_SR_PARAMS}->{SR_READINGS};
     
-    Log3 $name, 2, "LoeweTV_PrepareReading $name: reading: ".$rname."   value :".$rvalue.":";
+    Log3 $name, 4, "LoeweTV_PrepareReading $name: reading: ".$rname."   value :".$rvalue.":";
     $refreadings->{$rname} = $rvalue;
 }
  
@@ -540,7 +561,7 @@ sub LoeweTV_SendRequest($$;$$$) {
   
     my $ret;
   
-    Log3 $name, 2, "LoeweTV_SendRequest $name: ";
+    Log3 $name, 5, "LoeweTV_SendRequest $name: ";
     
     $retryCount = 0 if ( ! defined( $retryCount ) );
     # increase retrycount for next try
@@ -552,7 +573,7 @@ sub LoeweTV_SendRequest($$;$$$) {
     
     my $actionString = $action.(defined($actPar1)?"  Par1:".$actPar1.":":"")."  ".(defined($actPar2)?"  Par2:".$actPar2.":":"");
 
-    Log3 $name, 2, "LoeweTV_SendRequest $name: called with action ".$actionString;
+    Log3 $name, 4, "LoeweTV_SendRequest $name: called with action ".$actionString;
     
     # ensure actionQueue exists
     $hash->{actionQueue} = [] if ( ! defined( $hash->{actionQueue} ) );
@@ -560,9 +581,9 @@ sub LoeweTV_SendRequest($$;$$$) {
     # Queue if not yet retried and currently waiting
     if ( ( defined( $hash->{doStatus} ) ) && ( $hash->{doStatus} =~ /^WAITING/ ) && (  $retryCount == 0 ) ){
       # add to queue
-      Log3 $name, 2, "LoeweTV_SendRequest $name: add action to queue - args: ".$actionString;
+      Log3 $name, 4, "LoeweTV_SendRequest $name: add action to queue - args: ".$actionString;
       # RequestAccess will always be added to the beginning of the queue
-      if ( ( $action eq "RequestAccess" ) || ( $action eq "RequestAccess" ))  {
+      if ( ( $action eq "RequestAccess" ) )  {
         unshift( @{ $hash->{actionQueue} }, \@args );
       } else {
         push( @{ $hash->{actionQueue} }, \@args );
@@ -572,7 +593,9 @@ sub LoeweTV_SendRequest($$;$$$) {
 
     #######################
     # check authentication otherwise queue the current cmd and do authenticate first
-    if ( ($action ne "RequestAccess") && ( ! LoeweTV_HasAccess($hash) ) ) {
+    # but only if not already done once 
+    # (pending will create another send request automatically first might return pending before accepted is returned)
+    if ( ($action ne "RequestAccess") && ( ! LoeweTV_HasAccess($hash) ) && ( $retryCount == 0 ) ) {
       # add to queue
       Log3 $name, 4, "LoeweTV_SendRequest $name: add action to queue - args ".$actionString;
       push( @{ $hash->{actionQueue} }, \@args );
@@ -673,7 +696,7 @@ sub LoeweTV_SendRequest($$;$$$) {
                                     ],
     );
 
-   Log3 $name, 2, "STARTING SENDREQUEST: $action";
+   Log3 $name, 5, "STARTING SENDREQUEST: $action";
    
    
    # ??? hash for params need to be moved to initialize
@@ -741,7 +764,7 @@ sub LoeweTV_SendRequest($$;$$$) {
   
     $hash->{HU_SR_PARAMS}->{hash} = $hash;
 
-    Log3 $name, 2, "Sub LoeweTV_SendRequest ($name) - Request: ".Dumper($message);
+    Log3 $name, 5, "Sub LoeweTV_SendRequest ($name) - Action ".$actionString."   Request: ".Dumper($message);
     
     # send the request non blocking
     if ( defined( $ret ) ) {
@@ -774,9 +797,9 @@ sub LoeweTV_HU_Callback($$$)
   my $ret;
   my $action = $param->{action};
 
-  Log3 $name, 2, "LoeweTV_HU_Callback $name: ".
-    (defined( $err )?"status err :".$err.":":"no error").
-    "     data :".(( defined( $data ) )?$data:"<undefined>");
+  Log3 $name, 4, "LoeweTV_HU_Callback $name: ".
+    (defined( $err )?"status err :".$err.":":"no error");
+  Log3 $name, 5, "LoeweTV_HU_Callback $name:   data :".(( defined( $data ) )?$data:"<undefined>");
 
   if ( $err ne "" ) {
     $ret = "Error returned: $err";
@@ -792,7 +815,7 @@ sub LoeweTV_HU_Callback($$$)
     Log3 $name, 2, "LoeweTV_HU_Callback $name: action: ".$action."   code : ".$param->{code};
 
     if ( ( defined($data) ) && ( $data ne "" ) ) {
-      Log3 $name, 2, "LoeweTV_HU_Callback $name: handle XML values";
+      Log3 $name, 4, "LoeweTV_HU_Callback $name: handle XML values";
       $twig2 = XML::Twig->new(twig_handlers => $handlers,keep_encoding => 1)->parse($data);
     }
     
@@ -806,10 +829,10 @@ sub LoeweTV_HU_Callback($$$)
   readingsBulkUpdate($hash, "requestResult", $ret );   
   
   if ( $ret eq  "SUCCESS" ) {
-    Log3 $name, 2, "LoeweTV_HU_Callback $name: update readings";
+    Log3 $name, 4, "LoeweTV_HU_Callback $name: update readings";
     my $refreadings = $param->{SR_READINGS};
     foreach my $readName ( keys %$refreadings ) {
-      Log3 $name, 2, "LoeweTV_HU_Callback $name: reading: ".$readName."   value :".$refreadings->{$readName}.":";
+      Log3 $name, 5, "LoeweTV_HU_Callback $name: reading: ".$readName."   value :".$refreadings->{$readName}.":";
       if ( defined( $refreadings->{$readName} ) ) {
         readingsBulkUpdate($hash, $readName, $refreadings->{$readName} );        
       } else {
@@ -939,7 +962,7 @@ sub LoeweTV_NewChannelList($$) {
     
     my $name                    = $hash->{NAME};
  
-    Log3 $name, 2, "LoeweTV_NewChannelList $name: List: ".$channelist;
+    Log3 $name, 4, "LoeweTV_NewChannelList $name: List: ".$channelist;
     
     # handle this only if there is a channellist id
     return if ((  ! defined( $channelist ) ) || ( $channelist eq "" ) );
@@ -949,6 +972,9 @@ sub LoeweTV_NewChannelList($$) {
       delete( $hash->{helper}{ChannelList} );
       my %tmp = ();
       $hash->{helper}{ChannelList} = \%tmp;
+      
+      my @atmp = ();
+      $hash->{helper}{ChannelSequence} = \@atmp;
       
       $hash->{helper}{ChannelListCount} = 0;
     }
@@ -963,7 +989,7 @@ sub LoeweTV_ChannelList_Reference($$) {
     
     my $name                    = $hash->{NAME};
  
-    Log3 $name, 2, "LoeweTV_ChannelList_Reference $name: Reference: ".$reference;
+    Log3 $name, 4, "LoeweTV_ChannelList_Reference $name: Reference: ".$reference;
     
     LoeweTV_SendRequest($hash, 'GetMediaItem', $reference );
 }
@@ -973,7 +999,7 @@ sub LoeweTV_ChannelList_Fragment($$$$$) {
     
     my $name                    = $hash->{NAME};
  
-    Log3 $name, 2, "LoeweTV_ChannelList_Fragment $name: Sequence: ".$sequence."  Counts: ".$start."-".$returned."  (".$total.")";
+    Log3 $name, 4, "LoeweTV_ChannelList_Fragment $name: Sequence: ".$sequence."  Counts: ".$start."-".$returned."  (".$total.")";
     
     my $channelist = $hash->{helper}{ChannelListView};
     
@@ -984,7 +1010,7 @@ sub LoeweTV_ChannelList_Fragment($$$$$) {
     return if ( ( $limit ) && ( $hash->{helper}{ChannelListCount} >= $limit ) );
     
     if ( $returned == 100 ) {
-      Log3 $name, 2, "LoeweTV_ChannelList_Fragment $name: queue next request";
+      Log3 $name, 4, "LoeweTV_ChannelList_Fragment $name: queue next request";
       # not yet complete queue the next request
       LoeweTV_SendRequest($hash, 'GetChannelList', $channelist, $start + $hash->{helper}{ChannelListCount} );
     }
@@ -1003,7 +1029,7 @@ sub LoeweTV_ChannelList_AddChannelXML($$$$$) {
     $caption = $caption->text_only() if ( defined( $caption ) );
     $shortinfo = $shortinfo->text_only() if ( defined( $shortinfo ) );
     
-    Log3 $name, 2, "LoeweTV_ChannelList_AddChannel $name: UUID: ".$uuid."  shortinfo: ".$shortinfo."   caption: ".$caption."  locator :".$locator.":";
+    Log3 $name, 5, "LoeweTV_ChannelList_AddChannel $name: UUID: ".$uuid."  shortinfo: ".$shortinfo."   caption: ".$caption."  locator :".$locator.":";
     
     # no channellist ignore
     return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
@@ -1014,6 +1040,8 @@ sub LoeweTV_ChannelList_AddChannelXML($$$$$) {
 
     my @channel = ( $uuid, $locator, $caption, $shortinfo );
     $hash->{helper}{ChannelList}->{$uuid} = \@channel;
+    
+    push( $hash->{helper}{ChannelSequence}, $uuid );
     
 }
 
@@ -1077,7 +1105,7 @@ sub LoeweTV_ChannelListText($) {
     my $s = "ChannelList    - ".$hash->{helper}{ChannelListView}." - \r\r";
     
     my $num = 0;
-    foreach my $uuid (keys $hash->{helper}{ChannelList}) {
+    foreach my $uuid ( @{$hash->{helper}{ChannelSequence}} ) {
       my $channel = $hash->{helper}{ChannelList}->{$uuid};
       
       my $c = $$channel[$LoeweTV_cl_caption];
