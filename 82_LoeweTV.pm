@@ -438,9 +438,9 @@ sub LoeweTV_Get($@) {
         
     } else {
     
-        my $list    = 'volume:noArg mute:noArg currentplayback:noArg ".
+        my $list    = "volume:noArg mute:noArg currentplayback:noArg ".
               "access:noArg devicedata:noArg ".
-              "listofchannellists channellist mediaitem currentevent:noArg nextevent:noArg showchannellist:noArg';
+              "listofchannellists channellist mediaitem currentevent:noArg nextevent:noArg showchannellist:noArg";
         
         return "Unknown argument $cmd, choose one of $list";
     }
@@ -661,7 +661,10 @@ sub LoeweTV_SendRequest($$;$$$) {
 "GetListOfChannelLists" =>  [sub {$content="<ltv:QueryParameters>
                                         <ltv:Range startIndex='".$actPar1."' maxItems='".($actPar1+100)."'/>
                                         <ltv:OrderField field='userChannelNumber' type='ascending'/>
-                                        </ltv:QueryParameters>";$result="m:ResultItemChannelLists"}
+                                        </ltv:QueryParameters> 
+                                        <ltv:AdditionalParameters> 
+                                          <ltv:Properties isActiveList='0'/> 
+                                        </ltv:AdditionalParameters>";$result="m:ResultItemChannelLists"}
                                     ],
                                         
 ########## untested            
