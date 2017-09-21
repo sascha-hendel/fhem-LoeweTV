@@ -73,12 +73,20 @@
 ## - return channellist in sequence of original channel list return
 ## 0.0.36
 
-## - 
+## - zapToMedia - translate & to &amp;
+## - test channellist with parameter - favlist0,favlist1 works
+## - set switchToName
+## - set switchToNumber
+## 0.0.37
+
 ##
 ###############################################################################
 ###############################################################################
 ##  TODO
 ###############################################################################
+## - 
+## - 
+## - 
 ## - 
 ## - getMediaItem to distinguish between call from channellist crawler or get command
 ## - 
@@ -118,7 +126,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.36";
+my $version = "0.0.37";
 
 
 # Declare functions
@@ -140,6 +148,7 @@ sub LoeweTV_IsPresent($);
 sub LoeweTV_HasAccess($);
 sub LoeweTV_ParseRequestAccess($$);
 
+sub LoeweTV_hasChannelList($);
 sub LoeweTV_NewChannelList($$);
 sub LoeweTV_ChannelList_Reference($$);
 sub LoeweTV_ChannelList_Reference($$);
@@ -149,10 +158,10 @@ sub LoeweTV_getAnElementForChannelUUID($$$);
 sub LoeweTV_getNameForChannelUUID($$); 
 sub LoeweTV_getLocatorForChannelUUID($$);
 sub LoeweTV_getCaptionForChannelUUID($$);
-sub LoeweTV_getUUIDForChannelName($$);
-sub LoeweTV_getUUIDForChannelCaption($$);
+sub LoeweTV_findUUIDForChannelName($$);
+sub LoeweTV_findUUIDForChannelCaption($$);
 sub LoeweTV_ChannelListText($);
-
+sub LoeweTV_GetChannelNames($$);
 
 
 #########################
@@ -359,11 +368,47 @@ sub LoeweTV_Set($@) {
     } elsif( lc $cmd eq 'switchto' ) {
     
         return "$cmd needs locator" if ( ( scalar( @args ) != 1 ) );
+        
         @actionargs = ( 'ZapToMedia', $args[0] );
+    } elsif( lc $cmd eq 'switchtoname' ) {
     
+        return "$cmd needs  name" if ( ( scalar( @args ) != 1 ) );
+        return "Channellist not loaded" if ( ! LoeweTV_hasChannelList( $hash ) );
+        
+        my $oname = $args[0];
+        $oname =~ s/`´/,/g;
+        $oname =~ s/`_´/°°°/g;
+        $oname =~ s/_/ /g;
+        $oname =~ s/°°°/_/g;
+        my $uuid = LoeweTV_findUUIDForChannelName( $hash, $oname );
+        return "$cmd Channel name (".$oname.") not found " if ( ! defined( $uuid ) );
+        my $locator = LoeweTV_getLocatorForChannelUUID( $hash, $uuid );
+        @actionargs = ( 'ZapToMedia', $locator );
+
+    } elsif( lc $cmd eq 'switchtonumber' ) {
+    
+        return "$cmd needs channel" if ( ( scalar( @args ) != 1 ) );
+        return "$cmd needs channel number" if ( $args[0] !~ /^[0-9]+$/ );
+        return "Channellist not loaded" if ( ! LoeweTV_hasChannelList( $hash ) );
+        
+        my $uuid = LoeweTV_findUUIDForChannelCaption( $hash, $args[0] );
+        return "$cmd Channel number (".$args[0].") not found " if ( ! defined( $uuid ) );
+        my $locator = LoeweTV_getLocatorForChannelUUID( $hash, $uuid );
+        @actionargs = ( 'ZapToMedia', $locator );
+
     } else {
     
-        my $list    = 'SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg deviceData:noArg switchto ';
+        my $list    = "SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg deviceData:noArg ".
+                      " switchTo switchToNumber ";
+        if ( LoeweTV_hasChannelList( $hash ) ) {
+          my $onames = LoeweTV_GetChannelNames( $hash, "`´" );
+          $onames =~ s/_/°°°/g;
+          $onames =~ s/ /_/g;
+          $onames =~ s/°°°/`_´/g;
+          $onames =~ s/`´/,/g;
+          $list .= " switchToName:".$onames." ";
+          #Debug "onames :".$onames.":";
+        }
         
         return "Unknown argument $cmd, choose one of $list";
     }
@@ -473,7 +518,7 @@ sub LoeweTV_TimerStatusRequest($) {
     }
  
     if ( $hash->{INTERVAL} > 0 ) {
-      InternalTimer( gettimeofday()+$hash->{INTERVAL}, "LoeweTV_TimerStatusRequest", $hash, 1 );
+#???      InternalTimer( gettimeofday()+$hash->{INTERVAL}, "LoeweTV_TimerStatusRequest", $hash, 1 );
     }
 
 }
@@ -659,8 +704,7 @@ sub LoeweTV_SendRequest($$;$$$) {
 ########## in progress            
 
 "GetListOfChannelLists" =>  [sub {$content="<ltv:QueryParameters>
-                                        <ltv:Range startIndex='".$actPar1."' maxItems='".($actPar1+100)."'/>
-                                        <ltv:OrderField field='userChannelNumber' type='ascending'/>
+                                        <ltv:Range startIndex='".$actPar1."' maxItems='".($actPar1+5)."'/>
                                         </ltv:QueryParameters> 
                                         <ltv:AdditionalParameters> 
                                           <ltv:Properties isActiveList='0'/> 
@@ -687,7 +731,8 @@ sub LoeweTV_SendRequest($$;$$$) {
                                         "m:ExtendedInfo" => sub {LoeweTV_PrepareReading($hash,"NextEvent_Info",$_->text("m:ExtendedInfo"));},
                                         "m:Locator" => sub {LoeweTV_PrepareReading($hash,"NextEvent_Locator",$_->text("m:Locator"));}}],
                                         
-        "ZapToMedia"            => [sub {$content="<ltv:Player>0</ltv:Player><ltv:Locator>".$actPar1."</ltv:Locator>";},
+        "ZapToMedia"            => [sub { my $tpar=$actPar1; $tpar =~ s/&amp;/<>/g; $tpar =~ s/&/&amp;/g; $tpar =~ s/<>/&amp;/g; 
+                                         $content="<ltv:Player>0</ltv:Player><ltv:Locator>".$tpar."</ltv:Locator>";},
                                         {"ltv:Result" => sub {$result="ltv:Result",$_->text("ltv:Result");}}],
             
         "SetActionField"        => [sub {$content="<ltv:InputText>".$actPar1."</ltv:InputText>";$result="m:Result"}],
@@ -960,6 +1005,12 @@ sub LoeweTV_HasAccess($) {
 #       if not complete --> queue next trunk startindex+100
 #   on ResultItemReference --> queue GetMediaItems for uuid in mediaItemUuid
 
+sub LoeweTV_hasChannelList($) {
+    my ($hash)        = @_;
+    return defined( $hash->{helper}{ChannelListView} );
+}
+
+
 sub LoeweTV_NewChannelList($$) {
     my ($hash,$channelist)        = @_;
     
@@ -1075,7 +1126,7 @@ sub LoeweTV_getCaptionForChannelUUID($$) {
     return LoeweTV_getAnElementForChannelUUID( $hash, $uuid, $LoeweTV_cl_caption );
 }
     
-sub LoeweTV_getUUIDForChannelName($$) {
+sub LoeweTV_findUUIDForChannelName($$) {
     my ($hash,$name)        = @_;
     # no channellist ignore
     return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
@@ -1087,7 +1138,19 @@ sub LoeweTV_getUUIDForChannelName($$) {
     return undef;
 }
     
-sub LoeweTV_getUUIDForChannelCaption($$) {
+sub LoeweTV_findUUIDForChannelLocator($$) {
+    my ($hash,$locator)        = @_;
+    # no channellist ignore
+    return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
+
+    foreach my $uuid (keys $hash->{helper}{ChannelList}) {
+      my $alocator = LoeweTV_getLocatorForChannelUUID( $hash, $uuid );
+      return $uuid if ( $alocator eq $locator );
+    }
+    return undef;
+}
+    
+sub LoeweTV_findUUIDForChannelCaption($$) {
     my ($hash,$name)        = @_;
     # no channellist ignore
     return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
@@ -1122,6 +1185,23 @@ sub LoeweTV_ChannelListText($) {
     return $s;
 }
 
+sub LoeweTV_GetChannelNames($$) {
+    my ($hash,$split)        = @_;
+    my $name        = $hash->{NAME};
+    
+    return "no channel list available" if ( ! defined( $hash->{helper}{ChannelList} ) );
+    
+    my $s = "";
+    
+    foreach my $uuid ( @{$hash->{helper}{ChannelSequence}} ) {
+      my $name = LoeweTV_getNameForChannelUUID( $hash, $uuid );
+      
+      $s .= $split if ( length($s) > 0 );
+      $s .= $name;
+    }
+    
+    return $s;
+}
 
 #######################################################
 1;
