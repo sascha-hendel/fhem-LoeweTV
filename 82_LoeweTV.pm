@@ -79,6 +79,10 @@
 ## - set switchToNumber
 ## 0.0.37
 
+## - get MediaItem will only add data if channellist
+## - get drarchive added - no analysis of data
+## 0.0.38
+
 ##
 ###############################################################################
 ###############################################################################
@@ -126,7 +130,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.37";
+my $version = "0.0.38";
 
 
 # Declare functions
@@ -172,6 +176,8 @@ my $LoeweTV_cl_locator = 1;
 my $LoeweTV_cl_caption = 2;
 my $LoeweTV_cl_shortinfo = 3;
 
+my $LoeweTV_dr_caption = 2;
+my $LoeweTV_cl_shortinfo = 3;
 
 #########################
 # TYPE routines
@@ -462,6 +468,13 @@ sub LoeweTV_Get($@) {
         # Need to reset count to ensure calculation of min/max fragments
         $hash->{helper}{ChannelListCount} = 0;        
         $hash->{helper}{ChannelListView} = "";
+
+    } elsif( lc $cmd eq 'drarchive' ) {
+        $args[0] = 0 if ( ( scalar( @args ) < 1 ) || ( $args[0] !~ /^\d+$/ ) );
+        @actionargs = ( 'GetDRPlusArchive', $args[0] );    
+        # Need to reset count to ensure calculation of min/max fragments
+        $hash->{helper}{ChannelListCount} = 0;        
+        $hash->{helper}{ChannelListView} = "";
         
     } elsif( lc $cmd eq 'mediaitem' ) {
         return "$cmd needs a uuid of a media item" if ( scalar( @args ) != 1 );
@@ -485,7 +498,7 @@ sub LoeweTV_Get($@) {
     
         my $list    = "volume:noArg mute:noArg currentplayback:noArg ".
               "access:noArg devicedata:noArg ".
-              "listofchannellists channellist mediaitem currentevent:noArg nextevent:noArg showchannellist:noArg";
+              "listofchannellists channellist drarchive mediaitem currentevent:noArg nextevent:noArg showchannellist:noArg";
         
         return "Unknown argument $cmd, choose one of $list";
     }
@@ -697,9 +710,10 @@ sub LoeweTV_SendRequest($$;$$$) {
                                         "m:ResultItemReference" => sub { LoeweTV_ChannelList_Reference( $hash, $_->att("mediaItemUuid") );}}
                                     ],
         "GetMediaItem"          =>  [sub {$content='<MediaItemReference mediaItemUuid="'.$actPar1.'"/>';$result="m:ShortInfo"},
-                                        {"m:ResultItem" => sub { LoeweTV_ChannelList_AddChannelXML( $hash, 
+                                        {"m:ResultItem" => sub { if ( defined( $actPar2 ) ) {
+                                            LoeweTV_ChannelList_AddChannelXML( $hash, 
                                                 $_->get_xpath('.//m:uuid', 0), $_->get_xpath('.//m:Locator', 0), 
-                                                $_->get_xpath('.//m:Caption', 0), $_->get_xpath('.//m:ShortInfo', 0) );}}
+                                                $_->get_xpath('.//m:Caption', 0), $_->get_xpath('.//m:ShortInfo', 0) );}}}
                                     ],
 ########## in progress            
 
@@ -738,7 +752,7 @@ sub LoeweTV_SendRequest($$;$$$) {
         "SetActionField"        => [sub {$content="<ltv:InputText>".$actPar1."</ltv:InputText>";$result="m:Result"}],
             
         "GetDRPlusArchive"      => [sub {$content="<ltv:QueryParameters>
-                                        <ltv:Range startIndex='".$actPar1."' maxItems='1000'/>
+                                        <ltv:Range startIndex='".$actPar1."' maxItems='10'/>
                                         <ltv:OrderField field='userChannelNumber' type='ascending'/>
                                         </ltv:QueryParameters>";$result="ltv:ResultItemDRPlusFragment"}
                                     ],
@@ -1045,7 +1059,7 @@ sub LoeweTV_ChannelList_Reference($$) {
  
     Log3 $name, 4, "LoeweTV_ChannelList_Reference $name: Reference: ".$reference;
     
-    LoeweTV_SendRequest($hash, 'GetMediaItem', $reference );
+    LoeweTV_SendRequest($hash, 'GetMediaItem', $reference, "list" );
 }
 
 sub LoeweTV_ChannelList_Fragment($$$$$) {
