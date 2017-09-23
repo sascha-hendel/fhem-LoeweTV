@@ -83,6 +83,9 @@
 ## - get drarchive added - no analysis of data
 ## 0.0.38
 
+## - new function LoeweTV_getTVMAC_setDEF run after firstRun to set hash->{TVMAC} and advanced Option in DEF
+## 0.0.39
+
 ##
 ###############################################################################
 ###############################################################################
@@ -130,7 +133,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.38";
+my $version = "0.0.39";
 
 
 # Declare functions
@@ -164,8 +167,11 @@ sub LoeweTV_getLocatorForChannelUUID($$);
 sub LoeweTV_getCaptionForChannelUUID($$);
 sub LoeweTV_findUUIDForChannelName($$);
 sub LoeweTV_findUUIDForChannelCaption($$);
+sub LoeweTV_findUUIDForChannelLocator($$);
 sub LoeweTV_ChannelListText($);
 sub LoeweTV_GetChannelNames($$);
+sub LoeweTV_PrepareReading($$$);
+sub LoeweTV_getTVMAC_setDEF($$);
 
 
 #########################
@@ -524,7 +530,7 @@ sub LoeweTV_TimerStatusRequest($) {
     
     
     if(LoeweTV_IsPresent( $hash )) {
-#???        LoeweTV_SendRequest($hash,'GetDeviceData');
+#???        LoeweTV_SendRequest($hash,'FUNKTION FÜR AKTUELLE CHANNELINFORMATIONEN');
       
     } else {
         readingsSingleUpdate($hash,'state','off',1);
@@ -683,7 +689,7 @@ sub LoeweTV_SendRequest($$;$$$) {
                                         </InputEventSequence>'},{"ltv:InjectRCKey" => sub {$hash->{helper}{lastchunk} = $_->text_only();}},],
                                         
         "GetDeviceData"         =>  [sub {$content='';},
-                                     {"m:MAC-Address" => sub {LoeweTV_PrepareReading($hash,"TVMAC", $_->text("m:MAC-Address"));},"m:Chassis" => sub {LoeweTV_PrepareReading($hash,"Chassis",$_->text("m:Chassis"));},"m:SW-Version" => sub {LoeweTV_PrepareReading($hash,"SW_Version",$_->text("m:SW-Version"));}}],
+                                     {"m:MAC-Address" => sub {LoeweTV_getTVMAC_setDEF($hash, $_->text("m:MAC-Address"));},"m:Chassis" => sub {LoeweTV_PrepareReading($hash,"Chassis",$_->text("m:Chassis"));},"m:SW-Version" => sub {LoeweTV_PrepareReading($hash,"SW_Version",$_->text("m:SW-Version"));}}],
             
         "SetVolume"             => [sub {$content="<Value>".($actPar1*10000)."</Value>"},
                                     {"m:Value" => sub {LoeweTV_PrepareReading($hash,"volume", int(($_->text ("m:Value")/10000)+0.5));}}
@@ -1216,6 +1222,26 @@ sub LoeweTV_GetChannelNames($$) {
     
     return $s;
 }
+
+sub LoeweTV_getTVMAC_setDEF($$) {
+
+    my ($hash,$tvmac)   = @_;
+    
+    
+    unless( defined($hash->{TVMAC}) ) {
+    
+        $hash->{TVMAC}  = $tvmac;
+        $hash->{DEF} = "$hash->{HOST} $tvmac"
+    }
+}
+
+
+
+
+
+
+
+
 
 #######################################################
 1;
