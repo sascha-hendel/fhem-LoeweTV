@@ -86,6 +86,9 @@
 ## - new function LoeweTV_getTVMAC_setDEF run after firstRun to set hash->{TVMAC} and advanced Option in DEF
 ## 0.0.39
 
+## - patch from der.einstein add player fubction remotekey
+## 0.0.40
+
 ##
 ###############################################################################
 ###############################################################################
@@ -133,7 +136,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.39";
+my $version = "0.0.40";
 
 
 # Declare functions
@@ -371,7 +374,8 @@ sub LoeweTV_Set($@) {
         return;
     
     } elsif( lc $cmd eq 'remotekey' ) {
-        return "$cmd needs argument remote key" if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^\d+$/ ) );
+        #return "$cmd needs argument remote key" if ( ( scalar( @args ) != 1 ) || ( $args[0] !~ /^\d+$/ ) );
+        return "$cmd needs argument remote key" if ( ( scalar( @args ) != 1 ) );
         @actionargs = ( 'InjectRCKey', $args[0] );    
     
     } elsif( lc $cmd eq 'connect' ) {
@@ -530,7 +534,7 @@ sub LoeweTV_TimerStatusRequest($) {
     
     
     if(LoeweTV_IsPresent( $hash )) {
-#???        LoeweTV_SendRequest($hash,'FUNKTION FÜR AKTUELLE CHANNELINFORMATIONEN');
+#???        LoeweTV_SendRequest($hash,'GetDeviceData');
       
     } else {
         readingsSingleUpdate($hash,'state','off',1);
@@ -624,6 +628,7 @@ sub LoeweTV_SendRequest($$;$$$) {
     my $name = $hash->{NAME};
   
     my $ret;
+    my $alphabet;
   
     Log3 $name, 5, "LoeweTV_SendRequest $name: ";
     
@@ -683,9 +688,17 @@ sub LoeweTV_SendRequest($$;$$$) {
                                         'm:AccessStatus' => sub {LoeweTV_ParseRequestAccess($hash, $_->text_only('m:AccessStatus'));},}
                                     ],
                                     
-        "InjectRCKey"           =>  [sub {$content='<InputEventSequence>
-                                        <RCKeyEvent alphabet="l2700" value="'.$actPar1.'" mode="press"/>
-                                        <RCKeyEvent alphabet="l2700" value="'.$actPar1.'" mode="release"/>
+        "InjectRCKey"           =>  [sub {
+                                        if ( index($actPar1, "hdr" ) != -1 ) {
+                                            $actPar1 =~ s/hdr// ;
+                                            $alphabet = "l2700-hdr" ;
+                                            
+                                        } else { 
+                                            $alphabet = "l2700" ; 
+                                        };
+                                        $content='<InputEventSequence>
+                                        <RCKeyEvent alphabet="'.$alphabet.'" value="'.$actPar1.'" mode="press"/>
+                                        <RCKeyEvent alphabet="'.$alphabet.'" value="'.$actPar1.'" mode="release"/>
                                         </InputEventSequence>'},{"ltv:InjectRCKey" => sub {$hash->{helper}{lastchunk} = $_->text_only();}},],
                                         
         "GetDeviceData"         =>  [sub {$content='';},
