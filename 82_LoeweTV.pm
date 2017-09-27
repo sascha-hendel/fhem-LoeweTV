@@ -97,6 +97,17 @@
 ## - get settings call 
 ## 0.0.42
 
+## - add get presence to refresh presence status
+## - If interval not set explicit - no repeated statusrequest
+## - regularly get volume/mute/channellist
+## - reset clientid on nonopresent
+## - add _attr function to hash
+## - start/stop presence and timerstatusrequest on disabled
+## - activate timerstatusrequest
+## 0.0.43
+
+
+
 ##
 ###############################################################################
 ###############################################################################
@@ -105,20 +116,16 @@
 ## - 
 ## - 
 ## - 
-## - 
 ## - getMediaItem to distinguish between call from channellist crawler or get command
+## - 
+## - get also media information for actual playback and store in readings
 ## - 
 ## - grab channel list of lists 
 ## - 
 ## - handle soap failures
 ##    <SOAP-ENV:Body>  <SOAP-ENV:Fault>   <faultcode>Server</faultcode>   <faultstring>URN 'urn:loewe.de:RemoteTV:Tablet' not found</faultstring>   
-##  <faultactor>cSOAP_Server</faultactor>   <detail/>  </SOAP-ENV:Fault> </SOAP-ENV:Body></SOAP-ENV:Envelope>
-##
+##   <faultactor>cSOAP_Server</faultactor>   <detail/>  </SOAP-ENV:Fault> </SOAP-ENV:Body></SOAP-ENV:Envelope>
 ## - 
-## - 
-## - regularly get volume / mute
-## - activate timerstatusrequest
-## - start/stop presence and timerstatusrequest on disabled
 ## - 
 ## - calc fcid from uniqueid?
 ## - update state consistently?
@@ -144,7 +151,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.42";
+my $version = "0.0.43";
 
 
 # Declare functions
@@ -161,7 +168,6 @@ sub LoeweTV_PresenceDone($);
 sub LoeweTV_PresenceAborted($);
 sub LoeweTV_TimerStatusRequest($);
 sub LoeweTV_Attr(@);
-sub LoeweTV_FirstRun($);
 sub LoeweTV_IsPresent($);
 sub LoeweTV_HasAccess($);
 sub LoeweTV_ParseRequestAccess($$);
@@ -205,10 +211,13 @@ sub LoeweTV_Initialize($) {
     $hash->{DefFn}      = "LoeweTV_Define";
     $hash->{UndefFn}    = "LoeweTV_Undef";
 
+    $hash->{AttrFn}     = "LoeweTV_Attr";
+
     $hash->{AttrList}   =  "fhemMAC " .
                         "interval " .
                         "channellist " .
                         "maxchannel " .
+                        "disable:1,0 disabledForIntervals ".
                         #"ip " .
                         #"tvmac " .
                         #"action " .
@@ -252,7 +261,7 @@ sub LoeweTV_Define($$) {
     $hash->{FCID}       = 1234;
     $hash->{TVMAC}      = $a[3] if(defined($a[3]));
     $hash->{VERSION}    = $version;
-    $hash->{INTERVAL}   = 15;
+    $hash->{INTERVAL}   = 0;
     $hash->{CLIENTID}   = "?";
     
     
@@ -262,11 +271,9 @@ sub LoeweTV_Define($$) {
     readingsSingleUpdate($hash,'state','initialized',1);
     
     if( $init_done ) {
-        LoeweTV_Presence($hash);
-        InternalTimer( gettimeofday()+5, "LoeweTV_FirstRun", $hash, 0 );
+        InternalTimer( gettimeofday()+5, "LoeweTV_TimerStatusRequest", $hash, 0 );
     } else {
-        InternalTimer( gettimeofday()+15, "LoeweTV_Presence", $hash, 0 );
-        InternalTimer( gettimeofday()+20, "LoeweTV_FirstRun", $hash, 0 );
+        InternalTimer( gettimeofday()+30, "LoeweTV_TimerStatusRequest", $hash, 0 );
     }
     
     return undef;
@@ -297,12 +304,18 @@ sub LoeweTV_Attr(@) {
         if( $cmd eq "set" and $attrVal eq "1" ) {
             readingsSingleUpdate ( $hash, "state", "disabled", 1 );
             $hash->{PARTIAL} = '';
+            RemoveInternalTimer($hash);
             Log3 $name, 3, "LoeweTV ($name) - disabled";
-        }
-
-        elsif( $cmd eq "del" ) {
+        } elsif( $cmd eq "set" and $attrVal eq "0" ) {
+            RemoveInternalTimer($hash);
             readingsSingleUpdate ( $hash, "state", "active", 1 );
             Log3 $name, 3, "LoeweTV ($name) - enabled";
+            LoeweTV_TimerStatusRequest($hash);
+        } elsif( $cmd eq "del" ) {
+            RemoveInternalTimer($hash);
+            readingsSingleUpdate ( $hash, "state", "active", 1 );
+            Log3 $name, 3, "LoeweTV ($name) - enabled";
+            LoeweTV_TimerStatusRequest($hash);
         }
     }
     
@@ -327,7 +340,7 @@ sub LoeweTV_Attr(@) {
         }
 
         elsif( $cmd eq "del" ) {
-            $hash->{INTERVAL}   = 15;
+            $hash->{INTERVAL}   = 0;
             RemoveInternalTimer($hash);
             Log3 $name, 4, "LoeweTV ($name) - delete User interval and set default: 300";
             LoeweTV_TimerStatusRequest($hash);
@@ -336,20 +349,6 @@ sub LoeweTV_Attr(@) {
     }
 
     return undef;
-}
-
-sub LoeweTV_FirstRun($) {
-
-    my $hash        = shift;
-    my $name        = $hash->{NAME};
-    
-    if(LoeweTV_IsPresent( $hash )) {
-        LoeweTV_SendRequest($hash,'GetDeviceData');
-    } else {
-        readingsSingleUpdate($hash,'state','off',1);
-    }
-    
-    InternalTimer( gettimeofday()+10, "LoeweTV_TimerStatusRequest", $hash, 1 );
 }
 
 sub LoeweTV_Set($@) {
@@ -456,7 +455,11 @@ sub LoeweTV_Get($@) {
     
     if( lc $cmd eq 'showchannellist' ) {
       return LoeweTV_ChannelListText( $hash );
-      
+
+    } elsif( lc $cmd eq 'presence' ) {
+      LoeweTV_Presence($hash);
+      return;
+
     } elsif( lc $cmd eq 'access' ) {
         @actionargs = ( 'RequestAccess');    
         
@@ -520,7 +523,7 @@ sub LoeweTV_Get($@) {
     } else {
     
         my $list    = "volume:noArg mute:noArg currentplayback:noArg ".
-              "access:noArg devicedata:noArg feature settings ".
+              "access:noArg devicedata:noArg feature settings presence:noArg ".
               "listofchannellists channellist drarchive mediaitem currentevent:noArg nextevent:noArg showchannellist:noArg";
         
         return "Unknown argument $cmd, choose one of $list";
@@ -545,16 +548,50 @@ sub LoeweTV_TimerStatusRequest($) {
     my $hash        = shift;
     my $name        = $hash->{NAME};
     
+    # Do nothing when disabled (also for intervals)
+    if(! IsDisabled( $name )) {
+
+        Log3 $name, 4, "Sub LoeweTV_TimerStatusRequest ($name) - start requests";
+
+        if(LoeweTV_IsPresent( $hash )) {
+        
+          # do sendrequests only every second call
+          if ( $hash->{TVSTATUS} ) {
     
-    if(LoeweTV_IsPresent( $hash )) {
-#???        LoeweTV_SendRequest($hash,'GetDeviceData');
-      
-    } else {
-        readingsSingleUpdate($hash,'state','off',1);
+            # handle regular requests if present
+            #   deviceData, mute, volume, currentEvent
+            LoeweTV_SendRequest($hash,'GetDeviceData');
+            LoeweTV_SendRequest($hash,'GetVolume');
+            LoeweTV_SendRequest($hash,'GetMute');
+            LoeweTV_SendRequest($hash,'GetCurrentEvent');
+            # ??? LoeweTV_SendRequest($hash,'GetCurrentPlayback');
+
+            # if channellist not defined request channels
+            if ( ! defined( $hash->{helper}{ChannelList} ) ) {
+              my $cl = AttrVal($name,"channellist","default");
+              LoeweTV_SendRequest($hash,'GetChannelList',$cl, 0 );
+            }
+            $hash->{TVSTATUS} = 0;
+          } else {
+            $hash->{TVSTATUS} = 1;
+          }
+          
+        } else {
+            # reset client id if not present - to force new connect
+            $hash->{CLIENTID}   = "?";
+            
+            # update state
+            readingsSingleUpdate($hash,'state','off',1);
+        }
+
+        # start blocking presence call
+        LoeweTV_Presence($hash);
+
     }
- 
+      
+    Log3 $name, 5, "Sub LoeweTV_TimerStatusRequest ($name) - Done - new sequence - ".$hash->{INTERVAL}." s";
     if ( $hash->{INTERVAL} > 0 ) {
-#???      InternalTimer( gettimeofday()+$hash->{INTERVAL}, "LoeweTV_TimerStatusRequest", $hash, 1 );
+      InternalTimer( gettimeofday()+$hash->{INTERVAL}, "LoeweTV_TimerStatusRequest", $hash, 1 );
     }
 
 }
@@ -969,7 +1006,6 @@ sub LoeweTV_Presence($) {
 
     my $hash    = shift;    
     my $name    = $hash->{NAME};
-    
     
     $hash->{helper}{RUNNING_PID} = BlockingCall("LoeweTV_PresenceRun", $name.'|'.$hash->{HOST}, "LoeweTV_PresenceDone", 5, "LoeweTV_PresenceAborted", $hash) unless(exists($hash->{helper}{RUNNING_PID}) );
 }
