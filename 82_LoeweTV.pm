@@ -89,6 +89,8 @@
 ## - patch from der.einstein add player fubction remotekey
 ## 0.0.40
 
+## - patch der.einstein read out "StreamingUrl" from CHannellist or GetMediaItem auslesen and insert to Channellist show with showchannellist
+
 ##
 ###############################################################################
 ###############################################################################
@@ -136,7 +138,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.40";
+my $version = "0.0.41";
 
 
 # Declare functions
@@ -163,7 +165,7 @@ sub LoeweTV_NewChannelList($$);
 sub LoeweTV_ChannelList_Reference($$);
 sub LoeweTV_ChannelList_Reference($$);
 sub LoeweTV_ChannelList_Fragment($$$$$);
-sub LoeweTV_ChannelList_AddChannelXML($$$$$);
+sub LoeweTV_ChannelList_AddChannelXML($$$$$$);
 sub LoeweTV_getAnElementForChannelUUID($$$);
 sub LoeweTV_getNameForChannelUUID($$); 
 sub LoeweTV_getLocatorForChannelUUID($$);
@@ -732,7 +734,8 @@ sub LoeweTV_SendRequest($$;$$$) {
                                         {"m:ResultItem" => sub { if ( defined( $actPar2 ) ) {
                                             LoeweTV_ChannelList_AddChannelXML( $hash, 
                                                 $_->get_xpath('.//m:uuid', 0), $_->get_xpath('.//m:Locator', 0), 
-                                                $_->get_xpath('.//m:Caption', 0), $_->get_xpath('.//m:ShortInfo', 0) );}}}
+                                                $_->get_xpath('.//m:Caption', 0), $_->get_xpath('.//m:ShortInfo', 0),
+                                                $_->get_xpath('.//m:StreamingUrl', 0) );}}}
                                     ],
 ########## in progress            
 
@@ -1106,8 +1109,8 @@ sub LoeweTV_ChannelList_Fragment($$$$$) {
 
 
 
-sub LoeweTV_ChannelList_AddChannelXML($$$$$) {
-    my ($hash,$uuid, $locator, $caption, $shortinfo)  = @_;
+sub LoeweTV_ChannelList_AddChannelXML($$$$$$) {
+    my ($hash,$uuid, $locator, $caption, $shortinfo, $streamingurl)  = @_;
     
     my $name                    = $hash->{NAME};
  
@@ -1115,8 +1118,9 @@ sub LoeweTV_ChannelList_AddChannelXML($$$$$) {
     $locator = $locator->text_only() if ( defined( $locator ) );
     $caption = $caption->text_only() if ( defined( $caption ) );
     $shortinfo = $shortinfo->text_only() if ( defined( $shortinfo ) );
+    $streamingurl = $streamingurl->text_only() if ( defined( $streamingurl ) );
     
-    Log3 $name, 5, "LoeweTV_ChannelList_AddChannel $name: UUID: ".$uuid."  shortinfo: ".$shortinfo."   caption: ".$caption."  locator :".$locator.":";
+    Log3 $name, 2, "LoeweTV_ChannelList_AddChannel $name: DUPLICATE FOUND UUID: ".$uuid."  shortinfo: ".$shortinfo."   caption: ".$caption."  locator :".$locator."  streamingurl: ".$streamingurl.":";
     
     # no channellist ignore
     return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
@@ -1125,7 +1129,7 @@ sub LoeweTV_ChannelList_AddChannelXML($$$$$) {
       Log3 $name, 2, "LoeweTV_ChannelList_AddChannel $name: DUPLICATE FOUND UUID: ".$uuid."  shortinfo: ".$shortinfo."   caption: ".$caption."  locator :".$locator.":";
     }
 
-    my @channel = ( $uuid, $locator, $caption, $shortinfo );
+    my @channel = ( $uuid, $locator, $caption, $shortinfo , $streamingurl );
     $hash->{helper}{ChannelList}->{$uuid} = \@channel;
     
     push( $hash->{helper}{ChannelSequence}, $uuid );
@@ -1210,7 +1214,7 @@ sub LoeweTV_ChannelListText($) {
       my $c = $$channel[$LoeweTV_cl_caption];
       $c = sprintf( "%4d", $c ) if ( $c =~ /\d+/ );
       
-      $s .= $c."   ".$$channel[$LoeweTV_cl_shortinfo]." : ".$uuid."\r    ".$$channel[$LoeweTV_cl_locator]."\r";
+      $s .= $c."   ".$$channel[$LoeweTV_cl_shortinfo]." : ".$uuid."\r    ".$$channel[$LoeweTV_cl_locator]."\r    ".$$channel[$LoeweTV_cl_streamingurl]."\r";
       $num++
     }
     $s .= "\r Channel count ".$num."\r";
