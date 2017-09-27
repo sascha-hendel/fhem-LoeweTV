@@ -90,6 +90,12 @@
 ## 0.0.40
 
 ## - patch der.einstein read out "StreamingUrl" from CHannellist or GetMediaItem auslesen and insert to Channellist show with showchannellist
+  
+## - fix for missing LoeweTV_cl_streamingurl
+## - fix remove devicedata in setter list
+## - get feature call with readings 
+## - get settings call 
+## 0.0.42
 
 ##
 ###############################################################################
@@ -138,7 +144,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.41";
+my $version = "0.0.42";
 
 
 # Declare functions
@@ -186,9 +192,7 @@ my $LoeweTV_cl_uuid = 0;
 my $LoeweTV_cl_locator = 1;
 my $LoeweTV_cl_caption = 2;
 my $LoeweTV_cl_shortinfo = 3;
-
-my $LoeweTV_dr_caption = 2;
-my $LoeweTV_cl_shortinfo = 3;
+my $LoeweTV_cl_streamingurl = 4;
 
 #########################
 # TYPE routines
@@ -416,7 +420,7 @@ sub LoeweTV_Set($@) {
 
     } else {
     
-        my $list    = "SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg deviceData:noArg ".
+        my $list    = "SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg ".
                       " switchTo switchToNumber ";
         if ( LoeweTV_hasChannelList( $hash ) ) {
           my $onames = LoeweTV_GetChannelNames( $hash, "`´" );
@@ -465,6 +469,10 @@ sub LoeweTV_Get($@) {
     
     } elsif( lc $cmd eq 'mute' ) {
         @actionargs = ( 'GetMute' );    
+    
+    } elsif( lc $cmd eq 'feature' ) {
+        $args[0] = "remote-app" if ( ( scalar( @args ) < 1 )  );
+        @actionargs = ( 'GetFeature' );    
 
     } elsif( lc $cmd eq 'currentplayback' ) {
         @actionargs = ( 'GetCurrentPlayback' );    
@@ -498,6 +506,9 @@ sub LoeweTV_Get($@) {
     } elsif( lc $cmd eq 'devicedata' ) {
         @actionargs = ( 'GetDeviceData');    
    
+    } elsif( lc $cmd eq 'settings' ) {
+        @actionargs = ( 'GetSettings');    
+   
     } elsif( lc $cmd eq 'currentevent' ) {
     
         @actionargs = ( 'GetCurrentEvent' );
@@ -509,7 +520,7 @@ sub LoeweTV_Get($@) {
     } else {
     
         my $list    = "volume:noArg mute:noArg currentplayback:noArg ".
-              "access:noArg devicedata:noArg ".
+              "access:noArg devicedata:noArg feature settings ".
               "listofchannellists channellist drarchive mediaitem currentevent:noArg nextevent:noArg showchannellist:noArg";
         
         return "Unknown argument $cmd, choose one of $list";
@@ -718,6 +729,12 @@ sub LoeweTV_SendRequest($$;$$$) {
             
         "GetMute"             => [sub {$content=""},
                                     {"m:Value" => sub {LoeweTV_PrepareReading($hash,"mute", $_->text ("m:Value"));}}
+                                    ],
+        "GetSettings"         => [sub {$content=""}
+                                    ],
+
+        "GetFeature"           => [sub {$content='<ltv:Name>'.$actPar1.'</ltv:Name>'},
+                                    {"m:Status" => sub {LoeweTV_PrepareReading($hash,"feature_$actPar1", $_->text ("m:Status"));}}
                                     ],
         "GetChannelList"        =>  [sub { my $clc = (defined( $hash->{helper}{ChannelListCount})?$hash->{helper}{ChannelListCount}:0);
                                         $content="<ltv:ChannelListView>".$actPar1."</ltv:ChannelListView>
