@@ -1185,7 +1185,7 @@ sub LoeweTV_ChannelList_AddChannelXML($$$$$$) {
     my @channel = ( $uuid, $locator, $caption, $shortinfo , $streamingurl );
     $hash->{helper}{ChannelList}->{$uuid} = \@channel;
     
-    push( %{$hash->{helper}{ChannelSequence}}, $uuid );
+    push( @{$hash->{helper}{ChannelSequence}}, $uuid );
     
 }
 
